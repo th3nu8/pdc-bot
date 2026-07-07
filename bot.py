@@ -264,9 +264,14 @@ async def before_monthly_vp_check():
 
 
 # ---------- /testmonthlycheck ----------
-@bot.tree.command(name="testmonthlycheck", description="Manually run the monthly low-VP check right now (for testing)")
+@bot.tree.command(name="testmonthlycheck", description="Manually run the low-VP check right now (for testing)")
+@app_commands.describe(period="Which period to check: last full month (real behavior) or current month so far (for testing)")
+@app_commands.choices(period=[
+    app_commands.Choice(name="Previous month (real monthly behavior)", value="previous"),
+    app_commands.Choice(name="Current month so far (for testing)", value="current"),
+])
 @is_vp_admin()
-async def testmonthlycheck(interaction: discord.Interaction):
+async def testmonthlycheck(interaction: discord.Interaction, period: app_commands.Choice[str] = None):
     await interaction.response.defer(ephemeral=True)
     if not MONTHLY_ALERT_CHANNEL_ID:
         await interaction.followup.send("MONTHLY_ALERT_CHANNEL_ID is not set in .env.", ephemeral=True)
@@ -279,9 +284,14 @@ async def testmonthlycheck(interaction: discord.Interaction):
             await interaction.followup.send("Could not access MONTHLY_ALERT_CHANNEL_ID.", ephemeral=True)
             return
     now = datetime.datetime.now(datetime.timezone.utc)
-    prev_start, prev_end = _previous_month_range(now)
-    await _run_monthly_check("manual-test", prev_start, prev_end, channel)
-    await interaction.followup.send(f"Ran the check and posted results in <#{MONTHLY_ALERT_CHANNEL_ID}>.", ephemeral=True)
+    use_current = period is not None and period.value == "current"
+    if use_current:
+        start = now.replace(day=1, hour=0, minute=0, second=0, microsecond=0)
+        end = now
+    else:
+        start, end = _previous_month_range(now)
+    await _run_monthly_check("manual-test", start, end, channel)
+    await interaction.followup.send(f"Ran the check ({'current month so far' if use_current else 'previous month'}) and posted results in <#{MONTHLY_ALERT_CHANNEL_ID}>.", ephemeral=True)
 
 
 if __name__ == "__main__":
