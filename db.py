@@ -30,6 +30,15 @@ def init_db():
         month_key TEXT PRIMARY KEY,
         run_at TEXT
     )""")
+    c.execute("""CREATE TABLE IF NOT EXISTS awards_log (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        user_id INTEGER NOT NULL,
+        username TEXT,
+        award_name TEXT NOT NULL,
+        reason TEXT,
+        admin_id INTEGER,
+        timestamp TEXT
+    )""")
     conn.commit()
     conn.close()
 
@@ -147,3 +156,62 @@ def mark_monthly_check_run(month_key):
     )
     conn.commit()
     conn.close()
+
+
+def add_award(user_id, username, award_name, reason, admin_id):
+    conn = get_conn()
+    c = conn.cursor()
+    c.execute(
+        "INSERT INTO awards_log (user_id, username, award_name, reason, admin_id, timestamp) VALUES (?,?,?,?,?,?)",
+        (user_id, username, award_name, reason, admin_id, datetime.now(timezone.utc).isoformat()),
+    )
+    conn.commit()
+    conn.close()
+
+
+def has_award(user_id, award_name):
+    conn = get_conn()
+    c = conn.cursor()
+    c.execute("SELECT COUNT(*) FROM awards_log WHERE user_id=? AND award_name=?", (user_id, award_name))
+    count = c.fetchone()[0]
+    conn.close()
+    return count > 0
+
+
+def count_award(user_id, award_name):
+    conn = get_conn()
+    c = conn.cursor()
+    c.execute("SELECT COUNT(*) FROM awards_log WHERE user_id=? AND award_name=?", (user_id, award_name))
+    count = c.fetchone()[0]
+    conn.close()
+    return count
+
+
+def get_awards(user_id):
+    conn = get_conn()
+    c = conn.cursor()
+    c.execute(
+        "SELECT award_name, reason, admin_id, timestamp FROM awards_log WHERE user_id=? ORDER BY id DESC",
+        (user_id,),
+    )
+    rows = c.fetchall()
+    conn.close()
+    return rows
+
+
+def remove_last_award(user_id, award_name):
+    """Deletes the single most recent award_log entry matching user+award. Returns True if one was removed."""
+    conn = get_conn()
+    c = conn.cursor()
+    c.execute(
+        "SELECT id FROM awards_log WHERE user_id=? AND award_name=? ORDER BY id DESC LIMIT 1",
+        (user_id, award_name),
+    )
+    row = c.fetchone()
+    if not row:
+        conn.close()
+        return False
+    c.execute("DELETE FROM awards_log WHERE id=?", (row[0],))
+    conn.commit()
+    conn.close()
+    return True
