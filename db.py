@@ -26,6 +26,10 @@ def init_db():
         admin_id INTEGER,
         timestamp TEXT
     )""")
+    c.execute("""CREATE TABLE IF NOT EXISTS monthly_checks (
+        month_key TEXT PRIMARY KEY,
+        run_at TEXT
+    )""")
     conn.commit()
     conn.close()
 
@@ -109,3 +113,37 @@ def get_history(user_id=None, limit=10):
     rows = c.fetchall()
     conn.close()
     return rows
+
+
+def get_vp_earned_in_range(user_id, start_iso, end_iso):
+    """Sum of positive (earned) VP for a user within [start_iso, end_iso)."""
+    conn = get_conn()
+    c = conn.cursor()
+    c.execute(
+        "SELECT COALESCE(SUM(amount), 0) FROM transactions "
+        "WHERE user_id=? AND amount > 0 AND timestamp >= ? AND timestamp < ?",
+        (user_id, start_iso, end_iso),
+    )
+    total = c.fetchone()[0]
+    conn.close()
+    return total
+
+
+def has_monthly_check_run(month_key):
+    conn = get_conn()
+    c = conn.cursor()
+    c.execute("SELECT 1 FROM monthly_checks WHERE month_key=?", (month_key,))
+    row = c.fetchone()
+    conn.close()
+    return row is not None
+
+
+def mark_monthly_check_run(month_key):
+    conn = get_conn()
+    c = conn.cursor()
+    c.execute(
+        "INSERT OR IGNORE INTO monthly_checks (month_key, run_at) VALUES (?, ?)",
+        (month_key, datetime.now(timezone.utc).isoformat()),
+    )
+    conn.commit()
+    conn.close()
