@@ -11,6 +11,7 @@ load_dotenv()
 TOKEN = os.getenv("DISCORD_TOKEN")
 GUILD_ID = os.getenv("GUILD_ID")  # optional: set for instant command sync during testing
 ADMIN_ROLE_ID = os.getenv("VP_ADMIN_ROLE_ID")  # optional: role allowed to manage VP besides Administrators
+LOG_CHANNEL_ID = os.getenv("LOG_CHANNEL_ID")  # optional: channel that receives a copy of every give/take/setvp
 
 intents = discord.Intents.default()
 intents.members = True  # needed to resolve member display names
@@ -28,6 +29,23 @@ def is_vp_admin():
                 return True
         return False
     return app_commands.check(predicate)
+
+
+async def post_log(embed: discord.Embed):
+    """Sends a copy of a VP change embed to the configured log channel, if set."""
+    if not LOG_CHANNEL_ID:
+        return
+    channel = bot.get_channel(int(LOG_CHANNEL_ID))
+    if channel is None:
+        try:
+            channel = await bot.fetch_channel(int(LOG_CHANNEL_ID))
+        except discord.HTTPException:
+            channel = None
+    if channel is not None:
+        try:
+            await channel.send(embed=embed)
+        except discord.Forbidden:
+            print(f"Missing permission to send messages in log channel {LOG_CHANNEL_ID}")
 
 
 @bot.event
@@ -72,6 +90,7 @@ async def give(interaction: discord.Interaction, user: discord.Member, amount: i
     embed.add_field(name="Reason", value=reason, inline=False)
     embed.set_footer(text=f"Awarded by {interaction.user.display_name}")
     await interaction.response.send_message(embed=embed)
+    await post_log(embed)
 
 
 # ---------- /take ----------
@@ -90,6 +109,7 @@ async def take(interaction: discord.Interaction, user: discord.Member, amount: i
     embed.add_field(name="Reason", value=reason, inline=False)
     embed.set_footer(text=f"Removed by {interaction.user.display_name}")
     await interaction.response.send_message(embed=embed)
+    await post_log(embed)
 
 
 # ---------- /setvp ----------
@@ -107,6 +127,7 @@ async def setvp(interaction: discord.Interaction, user: discord.Member, amount: 
     embed.add_field(name="Reason", value=reason, inline=False)
     embed.set_footer(text=f"Set by {interaction.user.display_name}")
     await interaction.response.send_message(embed=embed)
+    await post_log(embed)
 
 
 # ---------- /vp ----------
