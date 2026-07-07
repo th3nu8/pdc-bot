@@ -229,9 +229,17 @@ async def award(interaction: discord.Interaction, user: discord.Member, award_na
 
     db.add_award(user.id, str(user), canonical_name, reason, interaction.user.id)
 
+    vp_amount = entry.get("vp", 0)
+    new_total = None
+    if vp_amount:
+        new_total = db.add_vp(user.id, str(user), vp_amount, f"Award: {canonical_name} — {reason}", interaction.user.id)
+
     embed = discord.Embed(title="Award Given", color=discord.Color.gold())
     embed.add_field(name="User", value=user.mention, inline=True)
     embed.add_field(name="Award", value=canonical_name, inline=True)
+    if vp_amount:
+        vp_text = f"+{vp_amount}" if vp_amount > 0 else str(vp_amount)
+        embed.add_field(name="VP", value=f"{vp_text} (now {new_total})", inline=True)
     embed.add_field(name="Reason", value=reason, inline=False)
     embed.set_footer(text=f"Awarded by {interaction.user.display_name}")
     await interaction.response.send_message(embed=embed)
@@ -294,9 +302,16 @@ async def remove_award(interaction: discord.Interaction, user: discord.Member, a
             except discord.Forbidden:
                 pass
 
+    vp_amount = entry.get("vp", 0)
+    new_total = None
+    if vp_amount:
+        new_total = db.add_vp(user.id, str(user), -vp_amount, f"Award removed: {canonical_name}", interaction.user.id)
+
     embed = discord.Embed(title="Award Removed", color=discord.Color.red())
     embed.add_field(name="User", value=user.mention, inline=True)
     embed.add_field(name="Award", value=canonical_name, inline=True)
+    if vp_amount:
+        embed.add_field(name="VP", value=f"-{vp_amount} (now {new_total})", inline=True)
     if remaining > 0:
         embed.add_field(name="Remaining instances", value=str(remaining), inline=True)
     embed.set_footer(text=f"Removed by {interaction.user.display_name}")
