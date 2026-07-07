@@ -20,6 +20,12 @@ MONTHLY_CHECK_ROLE_ID = os.getenv("MONTHLY_CHECK_ROLE_ID")  # if set, only membe
 MONTHLY_CHECK_EXEMPT_ROLE_ID = os.getenv("MONTHLY_CHECK_EXEMPT_ROLE_ID")  # members with this role skip the monthly check entirely
 MIN_MONTHLY_VP = int(os.getenv("MIN_MONTHLY_VP", "4"))  # threshold for the monthly check
 
+ACTIVITY_CHECK_CHANNEL_ID = os.getenv("ACTIVITY_CHECK_CHANNEL_ID")  # channel where the monthly activity check is posted
+ACTIVITY_CHECK_PING_ROLE_IDS = [r.strip() for r in os.getenv("ACTIVITY_CHECK_PING_ROLE_IDS", "").split(",") if r.strip()]
+ACTIVITY_CHECK_EXEMPT_ROLE_ID = os.getenv("ACTIVITY_CHECK_EXEMPT_ROLE_ID")  # members with this role are never reported as non-reactors
+ACTIVITY_CHECK_DM_USER_ID = os.getenv("ACTIVITY_CHECK_DM_USER_ID")  # user who receives the non-reactor DM summary
+ACTIVITY_CHECK_DAYS = int(os.getenv("ACTIVITY_CHECK_DAYS", "14"))  # how many days members have to react
+
 intents = discord.Intents.default()
 intents.members = True  # needed to resolve member display names
 
@@ -66,6 +72,8 @@ async def on_ready():
         synced = await bot.tree.sync()
     if not monthly_vp_check.is_running():
         monthly_vp_check.start()
+    if not activity_check_loop.is_running():
+        activity_check_loop.start()
     print(f"Logged in as {bot.user} | synced {len(synced)} commands")
 
 
@@ -317,6 +325,163 @@ async def remove_award(interaction: discord.Interaction, user: discord.Member, a
     embed.set_footer(text=f"Removed by {interaction.user.display_name}")
     await interaction.response.send_message(embed=embed)
     await post_log(embed)
+
+
+def _chunk_text(text, limit=1900):
+    """Splits text into chunks under Discord's 2000-char message limit, breaking on newlines."""
+    lines = text.split("\n")
+    chunks = []
+    current = ""
+    for line in lines:
+        if current and len(current) + len(line) + 1 > limit:
+            chunks.append(current)
+            current = line
+        else:
+            current = f"{current}\n{line}" if current else line
+    if current:
+        chunks.append(current)
+    return chunks
+
+
+async def _post_activity_check(month_key: str, now: datetime.datetime):
+    if not ACTIVITY_CHECK_CHANNEL_ID:
+        print("ACTIVITY_CHECK skipped: ACTIVITY_CHECK_CHANNEL_ID is not set.")
+        return
+    channel = bot.get_channel(int(ACTIVITY_CHECK_CHANNEL_ID))
+    if channel is None:
+        try:
+            channel = await bot.fetch_channel(int(ACTIVITY_CHECK_CHANNEL_ID))
+        except discord.HTTPException:
+            print(f"ACTIVITY_CHECK skipped: could not access channel {ACTIVITY_CHECK_CHANNEL_ID}.")
+            return
+
+    deadline = now + datetime.timedelta(days=ACTIVITY_CHECK_DAYS)
+    deadline_ts = int(deadline.timestamp())
+    role_mentions = " ".join(f"<@&{rid}>" for rid in ACTIVITY_CHECK_PING_ROLE_IDS)
+
+    content = (
+        f"{role_mentions}\n"
+        f"# Monthly Activity Check\n"
+        f"React with a ✅ by <t:{deadline_ts}:F> (<t:{deadline_ts}:R>)"
+    ).strip()
+
+    message = await channel.send(
+        content,
+        allowed_mentions=discord.AllowedMentions(roles=True, users=False, everyone=False),
+    )
+    await message.add_reaction("✅")
+    db.create_activity_check(month_key, channel.id, message.id, now.isoformat(), deadline.isoformat())
+
+
+async def _finalize_activity_check(check_id: int, channel_id: int, message_id: int):
+    channel = bot.get_channel(channel_id)
+    if channel is None:
+        try:
+            channel = await bot.fetch_channel(channel_id)
+        except discord.HTTPException:
+            print(f"ACTIVITY_CHECK finalize skipped: could not access channel {channel_id}.")
+            db.mark_activity_check_dm_sent(check_id)
+            return
+
+    try:
+        message = await channel.fetch_message(message_id)
+    except discord.HTTPException:
+        print(f"ACTIVITY_CHECK finalize skipped: could not fetch message {message_id}.")
+        db.mark_activity_check_dm_sent(check_id)
+        return
+
+    reactors = set()
+    for reaction in message.reactions:
+        if str(reaction.emoji) == "✅":
+            async for user in reaction.users():
+                if not user.bot:
+                    reactors.add(user.id)
+
+    guild = channel.guild
+    non_reactors = []
+    if guild is not None:
+        for member in guild.members:
+            if member.bot:
+                continue
+            if member.id in reactors:
+                continue
+            if ACTIVITY_CHECK_EXEMPT_ROLE_ID and any(str(r.id) == ACTIVITY_CHECK_EXEMPT_ROLE_ID for r in member.roles):
+                continue
+            if ACTIVITY_CHECK_PING_ROLE_IDS and not any(str(r.id) in ACTIVITY_CHECK_PING_ROLE_IDS for r in member.roles):
+                continue
+            non_reactors.append(member)
+
+    db.mark_activity_check_dm_sent(check_id)
+
+    if not ACTIVITY_CHECK_DM_USER_ID:
+        print("ACTIVITY_CHECK: no ACTIVITY_CHECK_DM_USER_ID set, skipping DM.")
+        return
+
+    try:
+        dm_user = await bot.fetch_user(int(ACTIVITY_CHECK_DM_USER_ID))
+    except discord.HTTPException:
+        print(f"ACTIVITY_CHECK: could not fetch DM target user {ACTIVITY_CHECK_DM_USER_ID}.")
+        return
+
+    if non_reactors:
+        lines = [f"- {m.mention} ({m})" for m in non_reactors]
+        header = f"**Monthly Activity Check — {len(non_reactors)} member(s) didn't react:**"
+        for chunk in _chunk_text(header + "\n" + "\n".join(lines)):
+            try:
+                await dm_user.send(chunk)
+            except discord.Forbidden:
+                print(f"ACTIVITY_CHECK: could not DM user {ACTIVITY_CHECK_DM_USER_ID} (DMs closed?).")
+                return
+    else:
+        try:
+            await dm_user.send("Monthly Activity Check: everyone reacted! 🎉")
+        except discord.Forbidden:
+            print(f"ACTIVITY_CHECK: could not DM user {ACTIVITY_CHECK_DM_USER_ID} (DMs closed?).")
+
+
+@tasks.loop(time=datetime.time(hour=9, tzinfo=datetime.timezone.utc))
+async def activity_check_loop():
+    now = datetime.datetime.now(datetime.timezone.utc)
+
+    month_key = now.strftime("%Y-%m")
+    if now.day == 1 and not db.has_activity_check_posted(month_key):
+        await _post_activity_check(month_key, now)
+
+    for check_id, channel_id, message_id in db.get_pending_activity_checks(now.isoformat()):
+        await _finalize_activity_check(check_id, channel_id, message_id)
+
+
+@activity_check_loop.before_loop
+async def before_activity_check_loop():
+    await bot.wait_until_ready()
+
+
+# ---------- /testactivitycheck ----------
+@bot.tree.command(name="testactivitycheck", description="Manually post a new monthly activity check right now (for testing)")
+@is_vp_admin()
+async def testactivitycheck(interaction: discord.Interaction):
+    await interaction.response.defer(ephemeral=True)
+    if not ACTIVITY_CHECK_CHANNEL_ID:
+        await interaction.followup.send("ACTIVITY_CHECK_CHANNEL_ID is not set in .env.", ephemeral=True)
+        return
+    now = datetime.datetime.now(datetime.timezone.utc)
+    month_key = f"manual-{now.strftime('%Y%m%d%H%M%S')}"
+    await _post_activity_check(month_key, now)
+    await interaction.followup.send(f"Posted a test activity check in <#{ACTIVITY_CHECK_CHANNEL_ID}>.", ephemeral=True)
+
+
+# ---------- /finalizeactivitycheck ----------
+@bot.tree.command(name="finalizeactivitycheck", description="Manually finalize the most recent activity check and DM the results now (for testing)")
+@is_vp_admin()
+async def finalizeactivitycheck(interaction: discord.Interaction):
+    await interaction.response.defer(ephemeral=True)
+    row = db.get_latest_activity_check()
+    if not row:
+        await interaction.followup.send("No activity check has been posted yet. Run /testactivitycheck first.", ephemeral=True)
+        return
+    check_id, channel_id, message_id = row
+    await _finalize_activity_check(check_id, channel_id, message_id)
+    await interaction.followup.send("Finalized the latest activity check and sent the DM (if configured and non-empty).", ephemeral=True)
 
 
 def _previous_month_range(now: datetime.datetime):
