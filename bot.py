@@ -15,6 +15,7 @@ ADMIN_ROLE_ID = os.getenv("VP_ADMIN_ROLE_ID")  # optional: role allowed to manag
 LOG_CHANNEL_ID = os.getenv("LOG_CHANNEL_ID")  # optional: channel that receives a copy of every give/take/setvp
 MONTHLY_ALERT_CHANNEL_ID = os.getenv("MONTHLY_ALERT_CHANNEL_ID")  # channel for the low-VP monthly notice
 MONTHLY_ALERT_ROLE_ID = os.getenv("MONTHLY_ALERT_ROLE_ID")  # role to ping in that notice
+MONTHLY_CHECK_ROLE_ID = os.getenv("MONTHLY_CHECK_ROLE_ID")  # if set, only members with this role are checked at all
 MONTHLY_CHECK_EXEMPT_ROLE_ID = os.getenv("MONTHLY_CHECK_EXEMPT_ROLE_ID")  # members with this role skip the monthly check entirely
 MIN_MONTHLY_VP = int(os.getenv("MIN_MONTHLY_VP", "4"))  # threshold for the monthly check
 
@@ -205,6 +206,8 @@ async def _run_monthly_check(month_key: str, prev_start: datetime.datetime, prev
     low_vp = []
     for member in guild.members:
         if member.bot:
+            continue
+        if MONTHLY_CHECK_ROLE_ID and not any(str(r.id) == MONTHLY_CHECK_ROLE_ID for r in member.roles):
             continue
         if MONTHLY_CHECK_EXEMPT_ROLE_ID and any(str(r.id) == MONTHLY_CHECK_EXEMPT_ROLE_ID for r in member.roles):
             continue
