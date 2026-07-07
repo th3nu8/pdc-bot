@@ -1,7 +1,8 @@
 import os
+import datetime
 import discord
 from discord import app_commands
-from discord.ext import commands
+from discord.ext import commands, tasks
 from dotenv import load_dotenv
 
 import db
@@ -12,6 +13,10 @@ TOKEN = os.getenv("DISCORD_TOKEN")
 GUILD_ID = os.getenv("GUILD_ID")  # optional: set for instant command sync during testing
 ADMIN_ROLE_ID = os.getenv("VP_ADMIN_ROLE_ID")  # optional: role allowed to manage VP besides Administrators
 LOG_CHANNEL_ID = os.getenv("LOG_CHANNEL_ID")  # optional: channel that receives a copy of every give/take/setvp
+MONTHLY_ALERT_CHANNEL_ID = os.getenv("MONTHLY_ALERT_CHANNEL_ID")  # channel for the low-VP monthly notice
+MONTHLY_ALERT_ROLE_ID = os.getenv("MONTHLY_ALERT_ROLE_ID")  # role to ping in that notice
+MONTHLY_CHECK_EXEMPT_ROLE_ID = os.getenv("MONTHLY_CHECK_EXEMPT_ROLE_ID")  # members with this role skip the monthly check entirely
+MIN_MONTHLY_VP = int(os.getenv("MIN_MONTHLY_VP", "4"))  # threshold for the monthly check
 
 intents = discord.Intents.default()
 intents.members = True  # needed to resolve member display names
@@ -57,6 +62,8 @@ async def on_ready():
         synced = await bot.tree.sync(guild=guild_obj)
     else:
         synced = await bot.tree.sync()
+    if not monthly_vp_check.is_running():
+        monthly_vp_check.start()
     print(f"Logged in as {bot.user} | synced {len(synced)} commands")
 
 
@@ -174,6 +181,104 @@ async def vphistory(interaction: discord.Interaction, user: discord.Member = Non
         lines.append(f"<@{user_id}>: {sign}{amount} VP — {reason} (by {admin_str})")
     embed = discord.Embed(title="VP Transaction History", description="\n".join(lines), color=discord.Color.teal())
     await interaction.response.send_message(embed=embed)
+
+
+def _previous_month_range(now: datetime.datetime):
+    """Returns (start, end) datetimes in UTC covering the full previous calendar month."""
+    first_of_this_month = now.replace(day=1, hour=0, minute=0, second=0, microsecond=0)
+    if first_of_this_month.month == 1:
+        prev_start = first_of_this_month.replace(year=first_of_this_month.year - 1, month=12)
+    else:
+        prev_start = first_of_this_month.replace(month=first_of_this_month.month - 1)
+    return prev_start, first_of_this_month
+
+
+async def _run_monthly_check(month_key: str, prev_start: datetime.datetime, prev_end: datetime.datetime, channel: discord.abc.Messageable):
+    if not GUILD_ID:
+        print("MONTHLY_ALERT skipped: GUILD_ID is not set.")
+        return
+    guild = bot.get_guild(int(GUILD_ID))
+    if guild is None:
+        print("MONTHLY_ALERT skipped: bot is not in the configured GUILD_ID.")
+        return
+
+    low_vp = []
+    for member in guild.members:
+        if member.bot:
+            continue
+        if MONTHLY_CHECK_EXEMPT_ROLE_ID and any(str(r.id) == MONTHLY_CHECK_EXEMPT_ROLE_ID for r in member.roles):
+            continue
+        earned = db.get_vp_earned_in_range(member.id, prev_start.isoformat(), prev_end.isoformat())
+        if earned < MIN_MONTHLY_VP:
+            low_vp.append((member, earned))
+
+    if not low_vp:
+        await channel.send(f"Monthly VP check for **{prev_start.strftime('%B %Y')}**: everyone met the {MIN_MONTHLY_VP} VP minimum. 🎉")
+        return
+
+    role_mention = f"<@&{MONTHLY_ALERT_ROLE_ID}>" if MONTHLY_ALERT_ROLE_ID else ""
+    lines = [f"{member.mention} — {earned} VP" for member, earned in low_vp]
+    embed = discord.Embed(
+        title=f"Monthly VP Check — {prev_start.strftime('%B %Y')}",
+        description=f"These members earned fewer than **{MIN_MONTHLY_VP} VP** last month:\n\n" + "\n".join(lines),
+        color=discord.Color.orange(),
+    )
+    await channel.send(
+        content=role_mention,
+        embed=embed,
+        allowed_mentions=discord.AllowedMentions(roles=True, users=False, everyone=False),
+    )
+
+
+@tasks.loop(time=datetime.time(hour=9, tzinfo=datetime.timezone.utc))
+async def monthly_vp_check():
+    now = datetime.datetime.now(datetime.timezone.utc)
+    if now.day != 1:
+        return
+    prev_start, prev_end = _previous_month_range(now)
+    month_key = prev_start.strftime("%Y-%m")
+    if db.has_monthly_check_run(month_key):
+        return
+    db.mark_monthly_check_run(month_key)
+
+    if not MONTHLY_ALERT_CHANNEL_ID:
+        print("MONTHLY_ALERT skipped: MONTHLY_ALERT_CHANNEL_ID is not set.")
+        return
+    channel = bot.get_channel(int(MONTHLY_ALERT_CHANNEL_ID))
+    if channel is None:
+        try:
+            channel = await bot.fetch_channel(int(MONTHLY_ALERT_CHANNEL_ID))
+        except discord.HTTPException:
+            print(f"MONTHLY_ALERT skipped: could not access channel {MONTHLY_ALERT_CHANNEL_ID}.")
+            return
+
+    await _run_monthly_check(month_key, prev_start, prev_end, channel)
+
+
+@monthly_vp_check.before_loop
+async def before_monthly_vp_check():
+    await bot.wait_until_ready()
+
+
+# ---------- /testmonthlycheck ----------
+@bot.tree.command(name="testmonthlycheck", description="Manually run the monthly low-VP check right now (for testing)")
+@is_vp_admin()
+async def testmonthlycheck(interaction: discord.Interaction):
+    await interaction.response.defer(ephemeral=True)
+    if not MONTHLY_ALERT_CHANNEL_ID:
+        await interaction.followup.send("MONTHLY_ALERT_CHANNEL_ID is not set in .env.", ephemeral=True)
+        return
+    channel = bot.get_channel(int(MONTHLY_ALERT_CHANNEL_ID))
+    if channel is None:
+        try:
+            channel = await bot.fetch_channel(int(MONTHLY_ALERT_CHANNEL_ID))
+        except discord.HTTPException:
+            await interaction.followup.send("Could not access MONTHLY_ALERT_CHANNEL_ID.", ephemeral=True)
+            return
+    now = datetime.datetime.now(datetime.timezone.utc)
+    prev_start, prev_end = _previous_month_range(now)
+    await _run_monthly_check("manual-test", prev_start, prev_end, channel)
+    await interaction.followup.send(f"Ran the check and posted results in <#{MONTHLY_ALERT_CHANNEL_ID}>.", ephemeral=True)
 
 
 if __name__ == "__main__":
