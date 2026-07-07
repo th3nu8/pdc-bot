@@ -3,45 +3,54 @@
     "name": "Medal of Reverence",
     "role_id": "1512889842961481878",
     "repeatable": false
+    "vp": 1000
   },
   {
     "name": "Medal of Service",
     "role_id": "1512890312752889977",
     "repeatable": true
+    "vp": 25
   },
   {
     "name": "Medal of Duty",
     "role_id": "1512943485425287220",
     "repeatable": true
+    "vp": 10
   },
   {
     "name": "Medal of Leadership",
     "role_id": "1512890568680800386",
     "repeatable": true
+    "vp": 10
   },
   {
     "name": "Medal of Valor",
     "role_id": "1512889567131336814",
     "repeatable": true
+    "vp": 10
   },
   {
     "name": "Medal of Commitment",
     "role_id": "1512890090001666098",
     "repeatable": false
+    "vp": 5
   },
   {
     "name": "Exemplary Conduct Medal",
     "role_id": "1512889377678692482",
     "repeatable": false
+    "vp": 5
   },
   {
     "name": "Red Bull Sponser",
     "role_id": "1512858977564623011",
     "repeatable": true
+    "vp": 3
   },
   {
     "name": "Distinguished Marksman Medal",
     "role_id": "1523878421476806696",
-    "repeatable": false
+    "repeatable": true
+    "vp": 3
   },
 ]
