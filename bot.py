@@ -6,6 +6,7 @@ from discord.ext import commands, tasks
 from dotenv import load_dotenv
 
 import db
+import awards_config
 
 load_dotenv()
 
@@ -182,6 +183,125 @@ async def vphistory(interaction: discord.Interaction, user: discord.Member = Non
         lines.append(f"<@{user_id}>: {sign}{amount} VP — {reason} (by {admin_str})")
     embed = discord.Embed(title="VP Transaction History", description="\n".join(lines), color=discord.Color.teal())
     await interaction.response.send_message(embed=embed)
+
+
+async def award_name_autocomplete(interaction: discord.Interaction, current: str):
+    names = awards_config.award_names()
+    matches = [n for n in names if current.lower() in n.lower()]
+    return [app_commands.Choice(name=n, value=n) for n in matches[:25]]
+
+
+# ---------- /award ----------
+@bot.tree.command(name="award", description="Give a user a configured award (assigns its role)")
+@app_commands.describe(user="User to award", award_name="Name of the award (see awards.json)", reason="Reason for the award")
+@app_commands.autocomplete(award_name=award_name_autocomplete)
+@is_vp_admin()
+async def award(interaction: discord.Interaction, user: discord.Member, award_name: str, reason: str):
+    entry = awards_config.find_award(award_name)
+    if not entry:
+        await interaction.response.send_message(
+            f"Unknown award '{award_name}'. Check awards.json for valid names.", ephemeral=True
+        )
+        return
+
+    canonical_name = entry["name"]
+    repeatable = bool(entry.get("repeatable", False))
+
+    if not repeatable and db.has_award(user.id, canonical_name):
+        await interaction.response.send_message(
+            f"{user.display_name} already has the **{canonical_name}** award, and it isn't repeatable.",
+            ephemeral=True,
+        )
+        return
+
+    role_id = entry.get("role_id")
+    if role_id and role_id != "PUT_ROLE_ID_HERE":
+        role = interaction.guild.get_role(int(role_id))
+        if role and role not in user.roles:
+            try:
+                await user.add_roles(role, reason=f"Award: {canonical_name} — {reason}")
+            except discord.Forbidden:
+                await interaction.response.send_message(
+                    "I don't have permission to assign that role. Check the bot's role position and permissions.",
+                    ephemeral=True,
+                )
+                return
+
+    db.add_award(user.id, str(user), canonical_name, reason, interaction.user.id)
+
+    embed = discord.Embed(title="Award Given", color=discord.Color.gold())
+    embed.add_field(name="User", value=user.mention, inline=True)
+    embed.add_field(name="Award", value=canonical_name, inline=True)
+    embed.add_field(name="Reason", value=reason, inline=False)
+    embed.set_footer(text=f"Awarded by {interaction.user.display_name}")
+    await interaction.response.send_message(embed=embed)
+    await post_log(embed)
+
+
+# ---------- /awards ----------
+@bot.tree.command(name="awards", description="Show all awards a user has received")
+@app_commands.describe(user="User to check (defaults to yourself)")
+async def awards_cmd(interaction: discord.Interaction, user: discord.Member = None):
+    target = user or interaction.user
+    rows = db.get_awards(target.id)
+    if not rows:
+        await interaction.response.send_message(f"{target.display_name} has no awards yet.", ephemeral=True)
+        return
+
+    lines = []
+    for award_name, reason, admin_id, timestamp in rows:
+        admin_str = f"<@{admin_id}>" if admin_id else "unknown"
+        try:
+            date_str = datetime.datetime.fromisoformat(timestamp).strftime("%Y-%m-%d")
+        except ValueError:
+            date_str = timestamp
+        lines.append(f"**{award_name}** — {reason}\n*by {admin_str} on {date_str}*")
+
+    embed = discord.Embed(
+        title=f"{target.display_name}'s Awards",
+        description="\n\n".join(lines),
+        color=discord.Color.gold(),
+    )
+    await interaction.response.send_message(embed=embed)
+
+
+# ---------- /remove (award removal) ----------
+@bot.tree.command(name="remove", description="Remove an award from a user")
+@app_commands.describe(user="User to remove the award from", award_name="Name of the award to remove")
+@app_commands.autocomplete(award_name=award_name_autocomplete)
+@is_vp_admin()
+async def remove_award(interaction: discord.Interaction, user: discord.Member, award_name: str):
+    entry = awards_config.find_award(award_name)
+    if not entry:
+        await interaction.response.send_message(f"Unknown award '{award_name}'.", ephemeral=True)
+        return
+
+    canonical_name = entry["name"]
+    removed = db.remove_last_award(user.id, canonical_name)
+    if not removed:
+        await interaction.response.send_message(
+            f"{user.display_name} doesn't have the **{canonical_name}** award.", ephemeral=True
+        )
+        return
+
+    remaining = db.count_award(user.id, canonical_name)
+    role_id = entry.get("role_id")
+    if remaining == 0 and role_id and role_id != "PUT_ROLE_ID_HERE":
+        role = interaction.guild.get_role(int(role_id))
+        if role and role in user.roles:
+            try:
+                await user.remove_roles(role, reason=f"Award removed: {canonical_name}")
+            except discord.Forbidden:
+                pass
+
+    embed = discord.Embed(title="Award Removed", color=discord.Color.red())
+    embed.add_field(name="User", value=user.mention, inline=True)
+    embed.add_field(name="Award", value=canonical_name, inline=True)
+    if remaining > 0:
+        embed.add_field(name="Remaining instances", value=str(remaining), inline=True)
+    embed.set_footer(text=f"Removed by {interaction.user.display_name}")
+    await interaction.response.send_message(embed=embed)
+    await post_log(embed)
 
 
 def _previous_month_range(now: datetime.datetime):
