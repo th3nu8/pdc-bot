@@ -39,6 +39,15 @@ def init_db():
         admin_id INTEGER,
         timestamp TEXT
     )""")
+    c.execute("""CREATE TABLE IF NOT EXISTS activity_checks (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        month_key TEXT,
+        channel_id INTEGER,
+        message_id INTEGER,
+        posted_at TEXT,
+        deadline_at TEXT,
+        dm_sent INTEGER DEFAULT 0
+    )""")
     conn.commit()
     conn.close()
 
@@ -215,3 +224,56 @@ def remove_last_award(user_id, award_name):
     conn.commit()
     conn.close()
     return True
+
+
+def create_activity_check(month_key, channel_id, message_id, posted_at, deadline_at):
+    conn = get_conn()
+    c = conn.cursor()
+    c.execute(
+        "INSERT INTO activity_checks (month_key, channel_id, message_id, posted_at, deadline_at, dm_sent) "
+        "VALUES (?,?,?,?,?,0)",
+        (month_key, channel_id, message_id, posted_at, deadline_at),
+    )
+    conn.commit()
+    check_id = c.lastrowid
+    conn.close()
+    return check_id
+
+
+def has_activity_check_posted(month_key):
+    conn = get_conn()
+    c = conn.cursor()
+    c.execute("SELECT 1 FROM activity_checks WHERE month_key=?", (month_key,))
+    row = c.fetchone()
+    conn.close()
+    return row is not None
+
+
+def get_pending_activity_checks(now_iso):
+    """Checks whose deadline has passed but the DM summary hasn't been sent yet."""
+    conn = get_conn()
+    c = conn.cursor()
+    c.execute(
+        "SELECT id, channel_id, message_id FROM activity_checks WHERE dm_sent=0 AND deadline_at<=?",
+        (now_iso,),
+    )
+    rows = c.fetchall()
+    conn.close()
+    return rows
+
+
+def mark_activity_check_dm_sent(check_id):
+    conn = get_conn()
+    c = conn.cursor()
+    c.execute("UPDATE activity_checks SET dm_sent=1 WHERE id=?", (check_id,))
+    conn.commit()
+    conn.close()
+
+
+def get_latest_activity_check():
+    conn = get_conn()
+    c = conn.cursor()
+    c.execute("SELECT id, channel_id, message_id FROM activity_checks ORDER BY id DESC LIMIT 1")
+    row = c.fetchone()
+    conn.close()
+    return row
