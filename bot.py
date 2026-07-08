@@ -495,6 +495,21 @@ async def event_type_autocomplete(interaction: discord.Interaction, current: str
 class EventTimeModal(discord.ui.Modal):
     """Private form (only visible to the person running /event) for picking the event's date/time/timezone."""
 
+    TIMEZONE_OPTIONS = [
+        ("Eastern Time (ET)", "America/New_York"),
+        ("Central Time (CT)", "America/Chicago"),
+        ("Mountain Time (MT)", "America/Denver"),
+        ("Pacific Time (PT)", "America/Los_Angeles"),
+        ("Alaska Time (AKT)", "America/Anchorage"),
+        ("Hawaii Time (HT)", "Pacific/Honolulu"),
+        ("UTC", "UTC"),
+        ("London (GMT/BST)", "Europe/London"),
+        ("Central Europe (CET/CEST)", "Europe/Berlin"),
+        ("India (IST)", "Asia/Kolkata"),
+        ("Japan (JST)", "Asia/Tokyo"),
+        ("Australia Eastern (AET)", "Australia/Sydney"),
+    ]
+
     def __init__(self, entry: dict, details: str, host: discord.Member):
         super().__init__(title=f"Schedule: {entry['name'][:30]}")
         self.entry = entry
@@ -507,16 +522,22 @@ class EventTimeModal(discord.ui.Modal):
         self.time_input = discord.ui.TextInput(
             label="Time — 24 hour (HH:MM)", placeholder="18:30", required=True, max_length=5
         )
-        self.timezone_input = discord.ui.TextInput(
-            label="Your timezone (IANA name)",
-            placeholder="America/Chicago",
-            default="America/Chicago",
-            required=True,
-            max_length=40,
+        self.timezone_select = discord.ui.Select(
+            placeholder="Choose your timezone",
+            options=[
+                discord.SelectOption(label=display_name, value=tz_name, default=(tz_name == "America/Chicago"))
+                for display_name, tz_name in self.TIMEZONE_OPTIONS
+            ],
         )
+        self.timezone_label = discord.ui.Label(
+            label="Your timezone",
+            description="The event time will be shown correctly to everyone regardless of their own timezone",
+            component=self.timezone_select,
+        )
+
         self.add_item(self.date_input)
         self.add_item(self.time_input)
-        self.add_item(self.timezone_input)
+        self.add_item(self.timezone_label)
 
     async def on_submit(self, interaction: discord.Interaction):
         try:
@@ -529,12 +550,12 @@ class EventTimeModal(discord.ui.Modal):
             )
             return
 
+        tz_name = self.timezone_select.values[0] if self.timezone_select.values else "America/Chicago"
         try:
-            tz = ZoneInfo(self.timezone_input.value.strip())
+            tz = ZoneInfo(tz_name)
         except Exception:
             await interaction.response.send_message(
-                f"Unknown timezone '{self.timezone_input.value}'. Use an IANA name like `America/Chicago`, "
-                f"`America/New_York`, `America/Denver`, `America/Los_Angeles`, `Europe/London`, or `UTC`.",
+                f"Unknown timezone '{tz_name}'. Please try again and pick one from the dropdown.",
                 ephemeral=True,
             )
             return
