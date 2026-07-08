@@ -1,5 +1,6 @@
 import os
 import datetime
+from zoneinfo import ZoneInfo
 import discord
 from discord import app_commands
 from discord.ext import commands, tasks
@@ -7,6 +8,7 @@ from dotenv import load_dotenv
 
 import db
 import awards_config
+import events_config
 
 load_dotenv()
 
@@ -25,6 +27,8 @@ ACTIVITY_CHECK_PING_ROLE_IDS = [r.strip() for r in os.getenv("ACTIVITY_CHECK_PIN
 ACTIVITY_CHECK_EXEMPT_ROLE_ID = os.getenv("ACTIVITY_CHECK_EXEMPT_ROLE_ID")  # members with this role are never reported as non-reactors
 ACTIVITY_CHECK_DM_USER_ID = os.getenv("ACTIVITY_CHECK_DM_USER_ID")  # user who receives the non-reactor DM summary
 ACTIVITY_CHECK_DAYS = int(os.getenv("ACTIVITY_CHECK_DAYS", "14"))  # how many days members have to react
+
+EVENT_TIMEZONE = os.getenv("EVENT_TIMEZONE", "America/Chicago")  # timezone used to interpret /event date+time input
 
 intents = discord.Intents.default()
 intents.members = True  # needed to resolve member display names
@@ -482,6 +486,70 @@ async def finalizeactivitycheck(interaction: discord.Interaction):
     check_id, channel_id, message_id = row
     await _finalize_activity_check(check_id, channel_id, message_id)
     await interaction.followup.send("Finalized the latest activity check and sent the DM (if configured and non-empty).", ephemeral=True)
+
+
+async def event_type_autocomplete(interaction: discord.Interaction, current: str):
+    names = events_config.event_names()
+    matches = [n for n in names if current.lower() in n.lower()]
+    return [app_commands.Choice(name=n, value=n) for n in matches[:25]]
+
+
+# ---------- /event ----------
+@bot.tree.command(name="event", description="Announce an event")
+@app_commands.describe(
+    event_type="Type of event (see events.json)",
+    date="Event date, format MM/DD/YYYY",
+    time="Event time, 24-hour format HH:MM (e.g. 18:30)",
+    details="Optional extra details about the event",
+)
+@app_commands.autocomplete(event_type=event_type_autocomplete)
+async def event(interaction: discord.Interaction, event_type: str, date: str, time: str, details: str = None):
+    entry = events_config.find_event(event_type)
+    if not entry:
+        await interaction.response.send_message(
+            f"Unknown event type '{event_type}'. Check events.json for valid names.", ephemeral=True
+        )
+        return
+
+    required_level = entry.get("clearance")
+    if required_level and not events_config.member_has_clearance(interaction.user, required_level):
+        await interaction.response.send_message(
+            f"You need **{required_level}** clearance (or higher) to create a **{entry['name']}** event.",
+            ephemeral=True,
+        )
+        return
+
+    try:
+        naive_dt = datetime.datetime.strptime(f"{date} {time}", "%m/%d/%Y %H:%M")
+    except ValueError:
+        await interaction.response.send_message(
+            "Couldn't parse that date/time. Use MM/DD/YYYY for date and 24-hour HH:MM for time "
+            "(e.g. date `07/15/2026`, time `18:30`).",
+            ephemeral=True,
+        )
+        return
+
+    try:
+        tz = ZoneInfo(EVENT_TIMEZONE)
+    except Exception:
+        tz = datetime.timezone.utc
+
+    localized = naive_dt.replace(tzinfo=tz)
+    ts = int(localized.timestamp())
+
+    embed = discord.Embed(title=f"📅 {entry['name']}", color=discord.Color.blue())
+    embed.add_field(name="When", value=f"<t:{ts}:t> on <t:{ts}:D> (<t:{ts}:R>)", inline=False)
+    if details:
+        embed.add_field(name="Details", value=details, inline=False)
+    if required_level:
+        embed.add_field(name="Clearance Required", value=required_level, inline=True)
+    embed.add_field(name="RSVP", value="✅ Attending  🟨 Maybe  ❌ Not Attending", inline=False)
+    embed.set_footer(text=f"Hosted by {interaction.user.display_name}")
+
+    await interaction.response.send_message(embed=embed)
+    message = await interaction.original_response()
+    for emoji in ("✅", "🟨", "❌"):
+        await message.add_reaction(emoji)
 
 
 def _previous_month_range(now: datetime.datetime):
