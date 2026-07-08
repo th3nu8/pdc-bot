@@ -600,10 +600,8 @@ async def event(interaction: discord.Interaction, event_type: str, details: str 
 
     required_level = entry.get("clearance")
     if required_level is not None and not events_config.member_has_clearance(interaction.user, required_level):
-        level_name = events_config.get_clearance_name(required_level)
-        label = f"{level_name} (Level {required_level})" if level_name else f"Level {required_level}"
         await interaction.response.send_message(
-            f"You need **{label}** clearance (or higher) to create a **{entry['name']}** event.",
+            "You don't have a high enough rank to host this event.",
             ephemeral=True,
         )
         return
