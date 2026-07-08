@@ -1,22 +1,32 @@
 [
   {
     "level": 1,
-    "name": "Recruit",
-    "role_id": "PUT_ROLE_ID_HERE"
+    "name": "NCO",
+    "role_id": "1435895679267373228"
   },
   {
     "level": 2,
-    "name": "Member",
-    "role_id": "PUT_ROLE_ID_HERE"
+    "name": "Instructor",
+    "role_id": "1435899644067713024"
   },
   {
     "level": 3,
-    "name": "Officer",
-    "role_id": "PUT_ROLE_ID_HERE"
+    "name": "2Lieutenant",
+    "role_id": "1510101373730033704"
+  },
+  {
+    "level": 3,
+    "name": "1Lieutenant",
+    "role_id": "1513071379963183154"
+  },
+  {
+    "level": 3,
+    "name": "Captain",
+    "role_id": "1508384368194748528"
   },
   {
     "level": 4,
-    "name": "Command",
-    "role_id": "PUT_ROLE_ID_HERE"
+    "name": "Operation",
+    "role_id": "1514422424341577788"
   }
 ]
