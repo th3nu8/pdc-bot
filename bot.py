@@ -28,6 +28,8 @@ ACTIVITY_CHECK_EXEMPT_ROLE_ID = os.getenv("ACTIVITY_CHECK_EXEMPT_ROLE_ID")  # me
 ACTIVITY_CHECK_DM_USER_ID = os.getenv("ACTIVITY_CHECK_DM_USER_ID")  # user who receives the non-reactor DM summary
 ACTIVITY_CHECK_DAYS = int(os.getenv("ACTIVITY_CHECK_DAYS", "14"))  # how many days members have to react
 
+EVENT_PING_ROLE_ID = os.getenv("EVENT_PING_ROLE_ID")  # role pinged whenever /event posts a new announcement
+
 intents = discord.Intents.default()
 intents.members = True  # needed to resolve member display names
 
@@ -570,7 +572,12 @@ class EventTimeModal(discord.ui.Modal):
         embed.add_field(name="RSVP", value="✅ Attending  🟨 Maybe  ❌ Not Attending", inline=False)
         embed.set_footer(text=f"Hosted by {self.host.display_name}")
 
-        await interaction.response.send_message(embed=embed)
+        content = f"<@&{EVENT_PING_ROLE_ID}>" if EVENT_PING_ROLE_ID else None
+        await interaction.response.send_message(
+            content=content,
+            embed=embed,
+            allowed_mentions=discord.AllowedMentions(roles=True, users=False, everyone=False),
+        )
         message = await interaction.original_response()
         for emoji in ("✅", "🟨", "❌"):
             await message.add_reaction(emoji)
