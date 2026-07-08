@@ -530,7 +530,7 @@ class EventTimeModal(discord.ui.Modal):
             ],
         )
         self.timezone_label = discord.ui.Label(
-            label="Your timezone",
+            text="Your timezone",
             description="The event time will be shown correctly to everyone regardless of their own timezone",
             component=self.timezone_select,
         )
