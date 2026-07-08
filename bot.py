@@ -563,16 +563,10 @@ class EventTimeModal(discord.ui.Modal):
         localized = naive_dt.replace(tzinfo=tz)
         ts = int(localized.timestamp())
 
-        required_level = self.entry.get("clearance")
-        level_name = events_config.get_clearance_name(required_level) if required_level is not None else None
-
         embed = discord.Embed(title=f"📅 {self.entry['name']}", color=discord.Color.blue())
         embed.add_field(name="When", value=f"<t:{ts}:t> on <t:{ts}:D> (<t:{ts}:R>)", inline=False)
         if self.details:
             embed.add_field(name="Details", value=self.details, inline=False)
-        if required_level is not None:
-            label = f"{level_name} (Level {required_level})" if level_name else f"Level {required_level}"
-            embed.add_field(name="Clearance Required", value=label, inline=True)
         embed.add_field(name="RSVP", value="✅ Attending  🟨 Maybe  ❌ Not Attending", inline=False)
         embed.set_footer(text=f"Hosted by {self.host.display_name}")
 
