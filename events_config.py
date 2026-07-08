@@ -37,44 +37,44 @@ def event_names():
 
 
 def load_clearance():
-    """Returns the clearance hierarchy, ordered lowest -> highest as listed in clearance.json."""
+    """Returns the clearance list: [{level: int, name: str, role_id: str}, ...]."""
     return _load_json(CLEARANCE_FILE)
 
 
-def clearance_names():
-    return [entry.get("level", "") for entry in load_clearance() if entry.get("level")]
-
-
-def _clearance_index_by_name(level_name, clearance_list):
-    target = level_name.strip().lower()
-    for i, entry in enumerate(clearance_list):
-        if str(entry.get("level", "")).strip().lower() == target:
-            return i
+def get_clearance_name(level_number, clearance_list=None):
+    if clearance_list is None:
+        clearance_list = load_clearance()
+    for entry in clearance_list:
+        if entry.get("level") == level_number:
+            return entry.get("name")
     return None
 
 
-def _member_max_clearance_index(member, clearance_list):
-    """Highest clearance index this member holds a role for, or -1 if none."""
+def member_clearance_level(member, clearance_list=None):
+    """Highest numeric clearance level this member holds a role for, or 0 if none."""
+    if clearance_list is None:
+        clearance_list = load_clearance()
     member_role_ids = {r.id for r in member.roles}
-    best = -1
-    for i, entry in enumerate(clearance_list):
+    best = 0
+    for entry in clearance_list:
         role_id = entry.get("role_id")
-        if not role_id or role_id == "PUT_ROLE_ID_HERE":
+        level = entry.get("level")
+        if not role_id or role_id == "PUT_ROLE_ID_HERE" or level is None:
             continue
         try:
             if int(role_id) in member_role_ids:
-                best = max(best, i)
-        except ValueError:
+                best = max(best, int(level))
+        except (ValueError, TypeError):
             continue
     return best
 
 
-def member_has_clearance(member, required_level_name, clearance_list=None):
-    """True if member holds a role at required_level_name or any higher level in the hierarchy."""
+def member_has_clearance(member, required_level, clearance_list=None):
+    """True if member's highest clearance level is >= required_level (higher levels can do everything lower ones can)."""
     if clearance_list is None:
         clearance_list = load_clearance()
-    required_idx = _clearance_index_by_name(required_level_name, clearance_list)
-    if required_idx is None:
+    try:
+        required_level_int = int(required_level)
+    except (TypeError, ValueError):
         return False
-    member_idx = _member_max_clearance_index(member, clearance_list)
-    return member_idx >= required_idx
+    return member_clearance_level(member, clearance_list) >= required_level_int

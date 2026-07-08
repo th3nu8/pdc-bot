@@ -1,0 +1,11 @@
+# Secrets - never commit this
+.env
+
+# Runtime data
+vp_data.db
+
+# Python
+__pycache__/
+*.pyc
+venv/
+.venv/

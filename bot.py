@@ -28,8 +28,6 @@ ACTIVITY_CHECK_EXEMPT_ROLE_ID = os.getenv("ACTIVITY_CHECK_EXEMPT_ROLE_ID")  # me
 ACTIVITY_CHECK_DM_USER_ID = os.getenv("ACTIVITY_CHECK_DM_USER_ID")  # user who receives the non-reactor DM summary
 ACTIVITY_CHECK_DAYS = int(os.getenv("ACTIVITY_CHECK_DAYS", "14"))  # how many days members have to react
 
-EVENT_TIMEZONE = os.getenv("EVENT_TIMEZONE", "America/Chicago")  # timezone used to interpret /event date+time input
-
 intents = discord.Intents.default()
 intents.members = True  # needed to resolve member display names
 
@@ -494,16 +492,83 @@ async def event_type_autocomplete(interaction: discord.Interaction, current: str
     return [app_commands.Choice(name=n, value=n) for n in matches[:25]]
 
 
+class EventTimeModal(discord.ui.Modal):
+    """Private form (only visible to the person running /event) for picking the event's date/time/timezone."""
+
+    def __init__(self, entry: dict, details: str, host: discord.Member):
+        super().__init__(title=f"Schedule: {entry['name'][:30]}")
+        self.entry = entry
+        self.details = details
+        self.host = host
+
+        self.date_input = discord.ui.TextInput(
+            label="Date (MM/DD/YYYY)", placeholder="07/15/2026", required=True, max_length=10
+        )
+        self.time_input = discord.ui.TextInput(
+            label="Time — 24 hour (HH:MM)", placeholder="18:30", required=True, max_length=5
+        )
+        self.timezone_input = discord.ui.TextInput(
+            label="Your timezone (IANA name)",
+            placeholder="America/Chicago",
+            default="America/Chicago",
+            required=True,
+            max_length=40,
+        )
+        self.add_item(self.date_input)
+        self.add_item(self.time_input)
+        self.add_item(self.timezone_input)
+
+    async def on_submit(self, interaction: discord.Interaction):
+        try:
+            naive_dt = datetime.datetime.strptime(f"{self.date_input.value} {self.time_input.value}", "%m/%d/%Y %H:%M")
+        except ValueError:
+            await interaction.response.send_message(
+                "Couldn't parse that date/time. Use MM/DD/YYYY for the date and 24-hour HH:MM for the time "
+                "(e.g. `07/15/2026` and `18:30`).",
+                ephemeral=True,
+            )
+            return
+
+        try:
+            tz = ZoneInfo(self.timezone_input.value.strip())
+        except Exception:
+            await interaction.response.send_message(
+                f"Unknown timezone '{self.timezone_input.value}'. Use an IANA name like `America/Chicago`, "
+                f"`America/New_York`, `America/Denver`, `America/Los_Angeles`, `Europe/London`, or `UTC`.",
+                ephemeral=True,
+            )
+            return
+
+        localized = naive_dt.replace(tzinfo=tz)
+        ts = int(localized.timestamp())
+
+        required_level = self.entry.get("clearance")
+        level_name = events_config.get_clearance_name(required_level) if required_level is not None else None
+
+        embed = discord.Embed(title=f"📅 {self.entry['name']}", color=discord.Color.blue())
+        embed.add_field(name="When", value=f"<t:{ts}:t> on <t:{ts}:D> (<t:{ts}:R>)", inline=False)
+        if self.details:
+            embed.add_field(name="Details", value=self.details, inline=False)
+        if required_level is not None:
+            label = f"{level_name} (Level {required_level})" if level_name else f"Level {required_level}"
+            embed.add_field(name="Clearance Required", value=label, inline=True)
+        embed.add_field(name="RSVP", value="✅ Attending  🟨 Maybe  ❌ Not Attending", inline=False)
+        embed.set_footer(text=f"Hosted by {self.host.display_name}")
+
+        await interaction.response.send_message(embed=embed)
+        message = await interaction.original_response()
+        for emoji in ("✅", "🟨", "❌"):
+            await message.add_reaction(emoji)
+
+
 # ---------- /event ----------
-@bot.tree.command(name="event", description="Announce an event")
+@bot.tree.command(name="event", description="Announce an event (opens a private time picker)")
 @app_commands.describe(
     event_type="Type of event (see events.json)",
-    date="Event date, format MM/DD/YYYY",
-    time="Event time, 24-hour format HH:MM (e.g. 18:30)",
     details="Optional extra details about the event",
 )
 @app_commands.autocomplete(event_type=event_type_autocomplete)
-async def event(interaction: discord.Interaction, event_type: str, date: str, time: str, details: str = None):
+async def event(interaction: discord.Interaction, event_type: str, details: str = None):
     entry = events_config.find_event(event_type)
     if not entry:
         await interaction.response.send_message(
@@ -512,44 +577,16 @@ async def event(interaction: discord.Interaction, event_type: str, date: str, ti
         return
 
     required_level = entry.get("clearance")
-    if required_level and not events_config.member_has_clearance(interaction.user, required_level):
+    if required_level is not None and not events_config.member_has_clearance(interaction.user, required_level):
+        level_name = events_config.get_clearance_name(required_level)
+        label = f"{level_name} (Level {required_level})" if level_name else f"Level {required_level}"
         await interaction.response.send_message(
-            f"You need **{required_level}** clearance (or higher) to create a **{entry['name']}** event.",
+            f"You need **{label}** clearance (or higher) to create a **{entry['name']}** event.",
             ephemeral=True,
         )
         return
 
-    try:
-        naive_dt = datetime.datetime.strptime(f"{date} {time}", "%m/%d/%Y %H:%M")
-    except ValueError:
-        await interaction.response.send_message(
-            "Couldn't parse that date/time. Use MM/DD/YYYY for date and 24-hour HH:MM for time "
-            "(e.g. date `07/15/2026`, time `18:30`).",
-            ephemeral=True,
-        )
-        return
-
-    try:
-        tz = ZoneInfo(EVENT_TIMEZONE)
-    except Exception:
-        tz = datetime.timezone.utc
-
-    localized = naive_dt.replace(tzinfo=tz)
-    ts = int(localized.timestamp())
-
-    embed = discord.Embed(title=f"📅 {entry['name']}", color=discord.Color.blue())
-    embed.add_field(name="When", value=f"<t:{ts}:t> on <t:{ts}:D> (<t:{ts}:R>)", inline=False)
-    if details:
-        embed.add_field(name="Details", value=details, inline=False)
-    if required_level:
-        embed.add_field(name="Clearance Required", value=required_level, inline=True)
-    embed.add_field(name="RSVP", value="✅ Attending  🟨 Maybe  ❌ Not Attending", inline=False)
-    embed.set_footer(text=f"Hosted by {interaction.user.display_name}")
-
-    await interaction.response.send_message(embed=embed)
-    message = await interaction.original_response()
-    for emoji in ("✅", "🟨", "❌"):
-        await message.add_reaction(emoji)
+    await interaction.response.send_modal(EventTimeModal(entry, details, interaction.user))
 
 
 def _previous_month_range(now: datetime.datetime):

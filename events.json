@@ -1,18 +1,18 @@
 [
   {
-    "name": "Basic Training",
-    "clearance": "Instructor"
+    "name": "Training Exercise",
+    "clearance": 1
   },
   {
-    "name": "Certification Training",
-    "clearance": "NCO"
+    "name": "Squad Operation",
+    "clearance": 2
   },
   {
-    "name": "Patrol",
-    "clearance": "CMD"
+    "name": "Officer Meeting",
+    "clearance": 3
   },
   {
-    "name": "Operation",
-    "clearance": "Operation"
+    "name": "Command Briefing",
+    "clearance": 4
   }
 ]

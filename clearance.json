@@ -1,0 +1,22 @@
+[
+  {
+    "level": 1,
+    "name": "Recruit",
+    "role_id": "PUT_ROLE_ID_HERE"
+  },
+  {
+    "level": 2,
+    "name": "Member",
+    "role_id": "PUT_ROLE_ID_HERE"
+  },
+  {
+    "level": 3,
+    "name": "Officer",
+    "role_id": "PUT_ROLE_ID_HERE"
+  },
+  {
+    "level": 4,
+    "name": "Command",
+    "role_id": "PUT_ROLE_ID_HERE"
+  }
+]
