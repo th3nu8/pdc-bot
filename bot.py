@@ -498,18 +498,18 @@ class EventTimeModal(discord.ui.Modal):
     """Private form (only visible to the person running /event) for picking the event's date/time/timezone."""
 
     TIMEZONE_OPTIONS = [
-        ("Eastern Time (ET)", "America/New_York"),
-        ("Central Time (CT)", "America/Chicago"),
-        ("Mountain Time (MT)", "America/Denver"),
-        ("Pacific Time (PT)", "America/Los_Angeles"),
-        ("Alaska Time (AKT)", "America/Anchorage"),
-        ("Hawaii Time (HT)", "Pacific/Honolulu"),
-        ("UTC", "UTC"),
-        ("London (GMT/BST)", "Europe/London"),
-        ("Central Europe (CET/CEST)", "Europe/Berlin"),
-        ("India (IST)", "Asia/Kolkata"),
-        ("Japan (JST)", "Asia/Tokyo"),
-        ("Australia Eastern (AET)", "Australia/Sydney"),
+        ("Eastern Time (ET) GMT -5", "America/New_York"),
+        ("Central Time (CT) GMT -6", "America/Chicago"),
+        ("Mountain Time (MT) GMT -7", "America/Denver"),
+        ("Pacific Time (PT) GMT -8", "America/Los_Angeles"),
+        ("Alaska Time (AKT) GMT -9", "America/Anchorage"),
+        ("Hawaii Time (HT) GMT -10", "Pacific/Honolulu"),
+        ("UTC GMT -11", "UTC"),
+        ("London (GMT/BST) GMT", "Europe/London"),
+        ("Central Europe (CET/CEST) GMT -1", "Europe/Berlin"),
+        ("India (IST) GMT -2", "Asia/Kolkata"),
+        ("Japan (JST) GMT -3", "Asia/Tokyo"),
+        ("Australia Eastern (AET) GMT -4", "Australia/Sydney"),
     ]
 
     def __init__(self, entry: dict, details: str, host: discord.Member):
