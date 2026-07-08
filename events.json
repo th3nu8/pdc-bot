@@ -1,18 +1,18 @@
 [
   {
-    "name": "Training Exercise",
+    "name": "Certification Training",
     "clearance": 1
   },
   {
-    "name": "Squad Operation",
+    "name": "Intructional Training",
     "clearance": 2
   },
   {
-    "name": "Officer Meeting",
+    "name": "Patrol",
     "clearance": 3
   },
   {
-    "name": "Command Briefing",
+    "name": "Operation",
     "clearance": 4
   }
 ]
