@@ -1,6 +1,7 @@
 import os
 import datetime
 from zoneinfo import ZoneInfo
+import aiohttp
 import discord
 from discord import app_commands
 from discord.ext import commands, tasks
@@ -9,6 +10,7 @@ from dotenv import load_dotenv
 import db
 import awards_config
 import events_config
+import monitor_config
 
 load_dotenv()
 
@@ -29,6 +31,9 @@ ACTIVITY_CHECK_DM_USER_ID = os.getenv("ACTIVITY_CHECK_DM_USER_ID")  # user who r
 ACTIVITY_CHECK_DAYS = int(os.getenv("ACTIVITY_CHECK_DAYS", "14"))  # how many days members have to react
 
 EVENT_PING_ROLE_ID = os.getenv("EVENT_PING_ROLE_ID")  # role pinged whenever /event posts a new announcement
+
+MONITOR_CHANNEL_ID = os.getenv("MONITOR_CHANNEL_ID")  # channel where up/down alerts are posted
+MONITOR_INTERVAL_MINUTES = int(os.getenv("MONITOR_INTERVAL_MINUTES", "5"))  # how often to check the sites
 
 intents = discord.Intents.default()
 intents.members = True  # needed to resolve member display names
@@ -78,6 +83,8 @@ async def on_ready():
         monthly_vp_check.start()
     if not activity_check_loop.is_running():
         activity_check_loop.start()
+    if not site_monitor_loop.is_running():
+        site_monitor_loop.start()
     print(f"Logged in as {bot.user} | synced {len(synced)} commands")
 
 
@@ -498,18 +505,18 @@ class EventTimeModal(discord.ui.Modal):
     """Private form (only visible to the person running /event) for picking the event's date/time/timezone."""
 
     TIMEZONE_OPTIONS = [
-        ("Eastern Time (ET) GMT -5", "America/New_York"),
-        ("Central Time (CT) GMT -6", "America/Chicago"),
-        ("Mountain Time (MT) GMT -7", "America/Denver"),
-        ("Pacific Time (PT) GMT -8", "America/Los_Angeles"),
-        ("Alaska Time (AKT) GMT -9", "America/Anchorage"),
-        ("Hawaii Time (HT) GMT -10", "Pacific/Honolulu"),
-        ("UTC GMT -11", "UTC"),
-        ("London (GMT/BST) GMT", "Europe/London"),
-        ("Central Europe (CET/CEST) GMT -1", "Europe/Berlin"),
-        ("India (IST) GMT -2", "Asia/Kolkata"),
-        ("Japan (JST) GMT -3", "Asia/Tokyo"),
-        ("Australia Eastern (AET) GMT -4", "Australia/Sydney"),
+        ("Eastern Time (ET)", "America/New_York"),
+        ("Central Time (CT)", "America/Chicago"),
+        ("Mountain Time (MT)", "America/Denver"),
+        ("Pacific Time (PT)", "America/Los_Angeles"),
+        ("Alaska Time (AKT)", "America/Anchorage"),
+        ("Hawaii Time (HT)", "Pacific/Honolulu"),
+        ("UTC", "UTC"),
+        ("London (GMT/BST)", "Europe/London"),
+        ("Central Europe (CET/CEST)", "Europe/Berlin"),
+        ("India (IST)", "Asia/Kolkata"),
+        ("Japan (JST)", "Asia/Tokyo"),
+        ("Australia Eastern (AET)", "Australia/Sydney"),
     ]
 
     def __init__(self, entry: dict, details: str, host: discord.Member):
@@ -717,6 +724,84 @@ async def testmonthlycheck(interaction: discord.Interaction, period: app_command
         start, end = _previous_month_range(now)
     await _run_monthly_check("manual-test", start, end, channel)
     await interaction.followup.send(f"Ran the check ({'current month so far' if use_current else 'previous month'}) and posted results in <#{MONTHLY_ALERT_CHANNEL_ID}>.", ephemeral=True)
+
+
+async def _check_site(url: str, timeout_seconds: int = 10) -> bool:
+    """Returns True if the site responds with a non-5xx status, False if unreachable or erroring."""
+    try:
+        timeout = aiohttp.ClientTimeout(total=timeout_seconds)
+        async with aiohttp.ClientSession(timeout=timeout) as session:
+            async with session.get(url, allow_redirects=True) as resp:
+                return resp.status < 500
+    except Exception:
+        return False
+
+
+async def _post_site_status(name: str, url: str, is_up: bool):
+    if not MONITOR_CHANNEL_ID:
+        print("SITE_MONITOR skipped: MONITOR_CHANNEL_ID is not set.")
+        return
+    channel = bot.get_channel(int(MONITOR_CHANNEL_ID))
+    if channel is None:
+        try:
+            channel = await bot.fetch_channel(int(MONITOR_CHANNEL_ID))
+        except discord.HTTPException:
+            print(f"SITE_MONITOR skipped: could not access channel {MONITOR_CHANNEL_ID}.")
+            return
+
+    if is_up:
+        embed = discord.Embed(title=f"✅ {name} is back online", description=url, color=discord.Color.green())
+    else:
+        embed = discord.Embed(title=f"🔴 {name} is down", description=url, color=discord.Color.red())
+    embed.timestamp = datetime.datetime.now(datetime.timezone.utc)
+    await channel.send(embed=embed)
+
+
+@tasks.loop(minutes=MONITOR_INTERVAL_MINUTES)
+async def site_monitor_loop():
+    for site in monitor_config.load_sites():
+        name = site.get("name")
+        url = site.get("url")
+        if not name or not url:
+            continue
+
+        is_up = await _check_site(url)
+        previous = db.get_site_status(name)
+
+        if previous is None:
+            # First check ever for this site — just record a baseline. Only alert if it's
+            # already down, so a fresh install doesn't spam "back online" for every site.
+            db.set_site_status(name, is_up)
+            if not is_up:
+                await _post_site_status(name, url, is_up)
+            continue
+
+        if is_up != previous:
+            db.set_site_status(name, is_up)
+            await _post_site_status(name, url, is_up)
+
+
+@site_monitor_loop.before_loop
+async def before_site_monitor_loop():
+    await bot.wait_until_ready()
+
+
+# ---------- /sitestatus ----------
+@bot.tree.command(name="sitestatus", description="Check the current status of monitored sites right now")
+@is_vp_admin()
+async def sitestatus(interaction: discord.Interaction):
+    await interaction.response.defer(ephemeral=True)
+    sites = monitor_config.load_sites()
+    if not sites:
+        await interaction.followup.send("No sites configured in monitor_sites.json.", ephemeral=True)
+        return
+    lines = []
+    for site in sites:
+        name = site.get("name", "Unknown")
+        url = site.get("url", "")
+        is_up = await _check_site(url) if url else False
+        lines.append(f"{'✅' if is_up else '🔴'} **{name}** — {url}")
+    await interaction.followup.send("\n".join(lines), ephemeral=True)
 
 
 if __name__ == "__main__":
