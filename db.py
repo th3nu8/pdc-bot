@@ -48,6 +48,11 @@ def init_db():
         deadline_at TEXT,
         dm_sent INTEGER DEFAULT 0
     )""")
+    c.execute("""CREATE TABLE IF NOT EXISTS site_status (
+        name TEXT PRIMARY KEY,
+        is_up INTEGER,
+        last_changed TEXT
+    )""")
     conn.commit()
     conn.close()
 
@@ -277,3 +282,27 @@ def get_latest_activity_check():
     row = c.fetchone()
     conn.close()
     return row
+
+
+def get_site_status(name):
+    """Returns True (up), False (down), or None if this site has never been checked before."""
+    conn = get_conn()
+    c = conn.cursor()
+    c.execute("SELECT is_up FROM site_status WHERE name=?", (name,))
+    row = c.fetchone()
+    conn.close()
+    if row is None:
+        return None
+    return bool(row[0])
+
+
+def set_site_status(name, is_up):
+    conn = get_conn()
+    c = conn.cursor()
+    c.execute(
+        "INSERT INTO site_status (name, is_up, last_changed) VALUES (?, ?, ?) "
+        "ON CONFLICT(name) DO UPDATE SET is_up=excluded.is_up, last_changed=excluded.last_changed",
+        (name, int(is_up), datetime.now(timezone.utc).isoformat()),
+    )
+    conn.commit()
+    conn.close()
