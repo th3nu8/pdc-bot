@@ -1,7 +1,7 @@
  [
   {
    "name": "Squad Deployment",
-   "clearance": 1
+   "clearance": 1,
    "pings": [
       {
         "name": "Sabre 1",
@@ -11,7 +11,7 @@
   },
   {
    "name": "Platoon Deployment",
-   "clearance": 2
+   "clearance": 2,
    "pings": [
       {
         "name": "Sabre",
@@ -33,7 +33,7 @@
   },
   {
    "name": "Operation",
-   "clearance": 3
+   "clearance": 3,
    "pings": [
       {
         "name": "Operator",
@@ -43,7 +43,7 @@
   },
   {
    "name": "HICOM Selection",
-   "clearance": 5
+   "clearance": 5,
    "pings": [
       {
         "name": "Command",
@@ -53,7 +53,7 @@
   },
   {
    "name": "Officer Training",
-   "clearance": 4
+   "clearance": 4,
    "pings": [
       {
         "name": "NCO",
@@ -63,7 +63,7 @@
   },
   {
    "name": "SQL Training",
-   "clearance": 4
+   "clearance": 4,
    "pings": [
       {
         "name": "Specialist",
@@ -73,7 +73,7 @@
   },
   {
    "name": "Certification Training",
-   "clearance": 4
+   "clearance": 4,
    "pings": [
       {
         "name": "Sabre",
@@ -95,7 +95,7 @@
   },
   {
    "name": "Advanced Protocol Training",
-   "clearance": 4
+   "clearance": 4,
    "pings": [
       {
         "name": "Private",
@@ -105,7 +105,7 @@
   },
   {
    "name": "Protocol Training",
-   "clearance": 4
+   "clearance": 4,
    "pings": [
       {
         "name": "Private",
@@ -115,7 +115,7 @@
   },
   {
    "name": "Joint Operation",
-   "clearance": 3
+   "clearance": 3,
    "pings": [
       {
         "name": "Operator",
@@ -125,7 +125,7 @@
   },
   {
    "name": "Joint Platoon Deployment",
-   "clearance": 2
+   "clearance": 2,
    "pings": [
       {
         "name": "Operator",
@@ -135,7 +135,7 @@
   },
   {
    "name": "Joint Squad Deployment",
-   "clearance": 1
+   "clearance": 1,
    "pings": [
       {
         "name": "Sabre",
@@ -157,7 +157,7 @@
   },
   {
    "name": "External Deployment",
-   "clearance": 1
+   "clearance": 1,
    "pings": [
       {
         "name": "Operator",
@@ -167,7 +167,7 @@
   },
   {
    "name": "Gamenight",
-   "clearance": 1
+   "clearance": 1,
    "pings": [
       {
         "name": "Operator",
@@ -177,7 +177,7 @@
   },
   {
    "name": "Movie Night",
-   "clearance": 1
+   "clearance": 1,
    "pings": [
       {
         "name": "Operator",
