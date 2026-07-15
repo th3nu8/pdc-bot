@@ -53,6 +53,11 @@ def init_db():
         is_up INTEGER,
         last_changed TEXT
     )""")
+    c.execute("""CREATE TABLE IF NOT EXISTS event_messages (
+        message_id INTEGER PRIMARY KEY,
+        origin_channel_id INTEGER,
+        event_name TEXT
+    )""")
     conn.commit()
     conn.close()
 
@@ -306,3 +311,24 @@ def set_site_status(name, is_up):
     )
     conn.commit()
     conn.close()
+
+
+def create_event_message(message_id, origin_channel_id, event_name):
+    conn = get_conn()
+    c = conn.cursor()
+    c.execute(
+        "INSERT OR REPLACE INTO event_messages (message_id, origin_channel_id, event_name) VALUES (?, ?, ?)",
+        (message_id, origin_channel_id, event_name),
+    )
+    conn.commit()
+    conn.close()
+
+
+def get_event_message(message_id):
+    """Returns (origin_channel_id, event_name) for a tracked event message, or None."""
+    conn = get_conn()
+    c = conn.cursor()
+    c.execute("SELECT origin_channel_id, event_name FROM event_messages WHERE message_id=?", (message_id,))
+    row = c.fetchone()
+    conn.close()
+    return row
