@@ -1,4 +1,5 @@
 import os
+import re
 import datetime
 from zoneinfo import ZoneInfo
 import aiohttp
@@ -11,6 +12,7 @@ import db
 import awards_config
 import events_config
 import monitor_config
+import detachments_config
 
 load_dotenv()
 
@@ -255,6 +257,105 @@ async def vphistory(interaction: discord.Interaction, user: discord.Member = Non
         lines.append(f"<@{user_id}>: {sign}{amount} VP — {reason} (by {admin_str})")
     embed = discord.Embed(title="VP Transaction History", description="\n".join(lines), color=discord.Color.teal())
     await interaction.response.send_message(embed=embed)
+
+
+def _extract_member_ids(text: str) -> set:
+    """Pulls Discord snowflake IDs out of a string of @mentions and/or raw IDs."""
+    return {int(match) for match in re.findall(r"\d{15,20}", text or "")}
+
+
+def _resolve_bulk_targets(interaction: discord.Interaction, role: discord.Role, users: str) -> set:
+    targets = set()
+    if role:
+        targets.update(m for m in role.members if not m.bot)
+    if users:
+        for uid in _extract_member_ids(users):
+            member = interaction.guild.get_member(uid)
+            if member and not member.bot:
+                targets.add(member)
+    return targets
+
+
+def _bulk_summary_embed(title: str, amount: int, reason: str, results: list, color) -> discord.Embed:
+    sign = "+" if amount >= 0 else ""
+    lines = [f"{m.mention}: {sign}{amount} VP → now {total}" for m, total in results]
+    description = "\n".join(lines)
+    if len(description) > 3900:
+        description = description[:3900] + "\n… (list truncated)"
+    embed = discord.Embed(
+        title=title,
+        description=f"**{sign}{amount} VP** to **{len(results)}** member(s)\nReason: {reason}\n\n{description}",
+        color=color,
+    )
+    return embed
+
+
+# ---------- /bulkgive ----------
+@bot.tree.command(name="bulkgive", description="Give VP to a group of people at once (by role and/or a list of users)")
+@app_commands.describe(
+    amount="Amount of VP to give to each person (positive)",
+    reason="Reason for the VP",
+    role="Give to everyone with this role (optional)",
+    users="Space-separated @mentions or user IDs (optional)",
+)
+@is_vp_admin()
+async def bulkgive(interaction: discord.Interaction, amount: int, reason: str, role: discord.Role = None, users: str = None):
+    if amount <= 0:
+        await interaction.response.send_message("Amount must be positive. Use /bulktake to remove VP.", ephemeral=True)
+        return
+    if not role and not users:
+        await interaction.response.send_message("Specify a role, a list of users, or both.", ephemeral=True)
+        return
+
+    targets = _resolve_bulk_targets(interaction, role, users)
+    if not targets:
+        await interaction.response.send_message("No valid members found from that role/list.", ephemeral=True)
+        return
+
+    await interaction.response.defer()
+    results = []
+    for member in targets:
+        new_total = db.add_vp(member.id, str(member), amount, reason, interaction.user.id)
+        results.append((member, new_total))
+
+    embed = _bulk_summary_embed("Bulk VP Awarded", amount, reason, results, discord.Color.green())
+    embed.set_footer(text=f"Awarded by {interaction.user.display_name}")
+    await interaction.followup.send(embed=embed)
+    await post_log(embed)
+
+
+# ---------- /bulktake ----------
+@bot.tree.command(name="bulktake", description="Remove VP from a group of people at once (by role and/or a list of users)")
+@app_commands.describe(
+    amount="Amount of VP to remove from each person (positive)",
+    reason="Reason for removing VP",
+    role="Take from everyone with this role (optional)",
+    users="Space-separated @mentions or user IDs (optional)",
+)
+@is_vp_admin()
+async def bulktake(interaction: discord.Interaction, amount: int, reason: str, role: discord.Role = None, users: str = None):
+    if amount <= 0:
+        await interaction.response.send_message("Amount must be positive.", ephemeral=True)
+        return
+    if not role and not users:
+        await interaction.response.send_message("Specify a role, a list of users, or both.", ephemeral=True)
+        return
+
+    targets = _resolve_bulk_targets(interaction, role, users)
+    if not targets:
+        await interaction.response.send_message("No valid members found from that role/list.", ephemeral=True)
+        return
+
+    await interaction.response.defer()
+    results = []
+    for member in targets:
+        new_total = db.add_vp(member.id, str(member), -amount, reason, interaction.user.id)
+        results.append((member, new_total))
+
+    embed = _bulk_summary_embed("Bulk VP Removed", -amount, reason, results, discord.Color.red())
+    embed.set_footer(text=f"Removed by {interaction.user.display_name}")
+    await interaction.followup.send(embed=embed)
+    await post_log(embed)
 
 
 async def award_name_autocomplete(interaction: discord.Interaction, current: str):
@@ -554,6 +655,24 @@ async def event_type_autocomplete(interaction: discord.Interaction, current: str
     return [app_commands.Choice(name=n, value=n) for n in matches[:25]]
 
 
+async def detachment_autocomplete(interaction: discord.Interaction, current: str):
+    names = detachments_config.detachment_names()
+    matches = [n for n in names if current.lower() in n.lower()]
+    return [app_commands.Choice(name=n, value=n) for n in matches[:25]]
+
+
+async def ping_autocomplete(interaction: discord.Interaction, current: str):
+    event_type = interaction.namespace.event_type
+    if not event_type:
+        return []
+    entry = events_config.find_event(event_type)
+    if not entry:
+        return []
+    names = [p.get("name", "") for p in entry.get("pings", []) if p.get("name")]
+    matches = [n for n in names if current.lower() in n.lower()]
+    return [app_commands.Choice(name=n, value=n) for n in matches[:25]]
+
+
 class EventTimeModal(discord.ui.Modal):
     """Private form (only visible to the person running /event) for picking the event's date/time/timezone."""
 
@@ -572,11 +691,22 @@ class EventTimeModal(discord.ui.Modal):
         ("Australia Eastern (AET)", "Australia/Sydney"),
     ]
 
-    def __init__(self, entry: dict, details: str, host: discord.Member):
+    def __init__(
+        self,
+        entry: dict,
+        details: str,
+        host: discord.Member,
+        origin_channel: discord.abc.Messageable,
+        primary_role_id: str = None,
+        detachment: dict = None,
+    ):
         super().__init__(title=f"Schedule: {entry['name'][:30]}")
         self.entry = entry
         self.details = details
         self.host = host
+        self.origin_channel = origin_channel
+        self.primary_role_id = primary_role_id
+        self.detachment = detachment
 
         self.date_input = discord.ui.TextInput(
             label="Date (MM/DD/YYYY)", placeholder="07/15/2026", required=True, max_length=10
@@ -632,15 +762,93 @@ class EventTimeModal(discord.ui.Modal):
         embed.add_field(name="RSVP", value="✅ Attending  🟨 Maybe  ❌ Not Attending", inline=False)
         embed.set_footer(text=f"Hosted by {self.host.display_name}")
 
-        content = f"<@&{EVENT_PING_ROLE_ID}>" if EVENT_PING_ROLE_ID else None
-        await interaction.response.send_message(
-            content=content,
-            embed=embed,
-            allowed_mentions=discord.AllowedMentions(roles=True, users=False, everyone=False),
-        )
-        message = await interaction.original_response()
+        # Determine where the event gets posted: the detachment's channel if one was
+        # picked, otherwise the same channel /event was run in.
+        target_channel = self.origin_channel
+        detachment_role_id = None
+        if self.detachment:
+            det_channel_id = self.detachment.get("channel_id")
+            if det_channel_id and det_channel_id != "PUT_CHANNEL_ID_HERE":
+                fetched = interaction.client.get_channel(int(det_channel_id))
+                if fetched is None:
+                    try:
+                        fetched = await interaction.client.fetch_channel(int(det_channel_id))
+                    except discord.HTTPException:
+                        fetched = None
+                if fetched is not None:
+                    target_channel = fetched
+            det_role_id = self.detachment.get("role_id")
+            if det_role_id and det_role_id != "PUT_ROLE_ID_HERE":
+                detachment_role_id = det_role_id
+
+        # Two independent pings can both apply: the event type's chosen ping (posted
+        # wherever the event ends up), and the detachment's own ping (only if a
+        # detachment was picked). Combine and dedupe.
+        role_ids = []
+        if self.primary_role_id:
+            role_ids.append(self.primary_role_id)
+        if detachment_role_id and detachment_role_id not in role_ids:
+            role_ids.append(detachment_role_id)
+        if not role_ids and EVENT_PING_ROLE_ID:
+            role_ids.append(EVENT_PING_ROLE_ID)
+        content = " ".join(f"<@&{r}>" for r in role_ids) if role_ids else None
+
+        try:
+            message = await target_channel.send(
+                content=content,
+                embed=embed,
+                allowed_mentions=discord.AllowedMentions(roles=True, users=False, everyone=False),
+            )
+        except discord.Forbidden:
+            await interaction.response.send_message(
+                "I don't have permission to post in that detachment's channel. Check the bot's permissions there.",
+                ephemeral=True,
+            )
+            return
+
         for emoji in ("✅", "🟨", "❌"):
             await message.add_reaction(emoji)
+
+        db.create_event_message(message.id, self.origin_channel.id, self.entry["name"])
+
+        if target_channel.id != self.origin_channel.id:
+            await interaction.response.send_message(
+                f"Event posted in {target_channel.mention}. You'll get a notice here whenever someone reacts to it.",
+                ephemeral=True,
+            )
+        else:
+            await interaction.response.send_message("Event posted!", ephemeral=True)
+
+
+EVENT_RSVP_LABELS = {"✅": "✅ Attending", "🟨": "🟨 Maybe", "❌": "❌ Not Attending"}
+
+
+@bot.event
+async def on_raw_reaction_add(payload: discord.RawReactionActionEvent):
+    if payload.user_id == bot.user.id:
+        return
+    emoji_str = str(payload.emoji)
+    if emoji_str not in EVENT_RSVP_LABELS:
+        return
+
+    record = db.get_event_message(payload.message_id)
+    if record is None:
+        return
+    origin_channel_id, event_name = record
+
+    origin_channel = bot.get_channel(origin_channel_id)
+    if origin_channel is None:
+        try:
+            origin_channel = await bot.fetch_channel(origin_channel_id)
+        except discord.HTTPException:
+            return
+
+    display = payload.member.mention if payload.member else f"<@{payload.user_id}>"
+    label = EVENT_RSVP_LABELS[emoji_str]
+    try:
+        await origin_channel.send(f"{display} reacted {label} to **{event_name}**.")
+    except discord.Forbidden:
+        print(f"EVENT_RSVP: missing permission to notify channel {origin_channel_id}")
 
 
 # ---------- /event ----------
@@ -648,9 +856,11 @@ class EventTimeModal(discord.ui.Modal):
 @app_commands.describe(
     event_type="Type of event (see events.json)",
     details="Optional extra details about the event",
+    ping="Which group to ping for this event (only needed if the event type has more than one option)",
+    detachment="Also ping and post to a specific detachment's channel (optional, see detachments.json)",
 )
-@app_commands.autocomplete(event_type=event_type_autocomplete)
-async def event(interaction: discord.Interaction, event_type: str, details: str = None):
+@app_commands.autocomplete(event_type=event_type_autocomplete, ping=ping_autocomplete, detachment=detachment_autocomplete)
+async def event(interaction: discord.Interaction, event_type: str, details: str = None, ping: str = None, detachment: str = None):
     entry = events_config.find_event(event_type)
     if not entry:
         await interaction.response.send_message(
@@ -666,7 +876,41 @@ async def event(interaction: discord.Interaction, event_type: str, details: str 
         )
         return
 
-    await interaction.response.send_modal(EventTimeModal(entry, details, interaction.user))
+    pings = entry.get("pings", [])
+    primary_role_id = None
+    if len(pings) == 1:
+        primary_role_id = pings[0].get("role_id")
+    elif len(pings) > 1:
+        if not ping:
+            options = ", ".join(p.get("name", "") for p in pings if p.get("name"))
+            await interaction.response.send_message(
+                f"This event type has multiple ping options — specify `ping`. Choices: {options}",
+                ephemeral=True,
+            )
+            return
+        match = next((p for p in pings if p.get("name", "").strip().lower() == ping.strip().lower()), None)
+        if not match:
+            await interaction.response.send_message(
+                f"Unknown ping option '{ping}' for this event type.", ephemeral=True
+            )
+            return
+        primary_role_id = match.get("role_id")
+
+    if primary_role_id == "PUT_ROLE_ID_HERE":
+        primary_role_id = None
+
+    detachment_entry = None
+    if detachment:
+        detachment_entry = detachments_config.find_detachment(detachment)
+        if not detachment_entry:
+            await interaction.response.send_message(
+                f"Unknown detachment '{detachment}'. Check detachments.json for valid names.", ephemeral=True
+            )
+            return
+
+    await interaction.response.send_modal(
+        EventTimeModal(entry, details, interaction.user, interaction.channel, primary_role_id, detachment_entry)
+    )
 
 
 def _previous_month_range(now: datetime.datetime):
