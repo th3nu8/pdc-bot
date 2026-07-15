@@ -1,32 +1,17 @@
 [
   {
-    "level": 1,
+    "level": 3,
     "name": "NCO",
-    "role_id": "1435895679267373228"
-  },
-  {
-    "level": 2,
-    "name": "Instructor",
-    "role_id": "1435899644067713024"
-  },
-  {
-    "level": 3,
-    "name": "2Lieutenant",
-    "role_id": "1510101373730033704"
-  },
-  {
-    "level": 3,
-    "name": "1Lieutenant",
-    "role_id": "1513071379963183154"
-  },
-  {
-    "level": 3,
-    "name": "Captain",
-    "role_id": "1508384368194748528"
+    "role_id": "1526569962683109456"
   },
   {
     "level": 4,
-    "name": "Operation",
-    "role_id": "1514422424341577788"
+    "name": "CMD",
+    "role_id": "1526568939914526870"
+  },
+  {
+    "level": 5,
+    "name": "Operation Department",
+    "role_id": "1526624308582158346"
   }
 ]
