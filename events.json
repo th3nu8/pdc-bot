@@ -1,54 +1,188 @@
  [
   {
-    "name": "Squad Deployment",
-    "clearance": 1
+   "name": "Squad Deployment",
+   "clearance": 1
+   "pings": [
+      {
+        "name": "Sabre 1",
+        "role_id": "PUT_ROLE_ID_HERE"
+      }
+    ]
   },
   {
-    "name": "Platoon Deployment",
-    "clearance": 2
+   "name": "Platoon Deployment",
+   "clearance": 2
+   "pings": [
+      {
+        "name": "Sabre",
+        "role_id": "1526577020329394227"
+      },
+      {
+        "name": "Leviathan",
+        "role_id": "1526577022120497203"
+      },
+      {
+        "name": "Stalker",
+        "role_id": "1526624995969601657"
+      },
+      {
+        "name": "Forerunner",
+        "role_id": "1526625003213164604"
+      }
+    ]
   },
   {
-    "name": "Operation",
-    "clearance": 3
+   "name": "Operation",
+   "clearance": 3
+   "pings": [
+      {
+        "name": "Operator",
+        "role_id": "1526704515984789754"
+      }
+    ]
   },
   {
-    "name": "HICOM Selection",
-    "clearance": 5
+   "name": "HICOM Selection",
+   "clearance": 5
+   "pings": [
+      {
+        "name": "Command",
+        "role_id": "1526568939914526870"
+      }
+    ]
   },
   {
-    "name": "Officer Training",
-    "clearance": 4
+   "name": "Officer Training",
+   "clearance": 4
+   "pings": [
+      {
+        "name": "NCO",
+        "role_id": "1526569962683109456"
+      }
+    ]
   },
   {
-    "name": "SQL Training",
-    "clearance": 4
+   "name": "SQL Training",
+   "clearance": 4
+   "pings": [
+      {
+        "name": "Specialist",
+        "role_id": "1526574485900361901"
+      }
+    ]
   },
   {
-    "name": "Certification Training",
-    "clearance": 4
+   "name": "Certification Training",
+   "clearance": 4
+   "pings": [
+      {
+        "name": "Sabre",
+        "role_id": "1526577020329394227"
+      },
+      {
+        "name": "Leviathan",
+        "role_id": "1526577022120497203"
+      },
+      {
+        "name": "Stalker",
+        "role_id": "1526624995969601657"
+      },
+      {
+        "name": "Forerunner",
+        "role_id": "1526625003213164604"
+      }
+    ]
   },
   {
-    "name": "Joint Operation",
-    "clearance": 3
+   "name": "Advanced Protocol Training",
+   "clearance": 4
+   "pings": [
+      {
+        "name": "Private",
+        "role_id": "1526574495752650953"
+      }
+    ]
   },
   {
-    "name": "Joint Platoon Deployment",
-    "clearance": 2
+   "name": "Protocol Training",
+   "clearance": 4
+   "pings": [
+      {
+        "name": "Private",
+        "role_id": "1526574497816379533"
+      }
+    ]
   },
   {
-    "name": "Joint Squad Deployment",
-    "clearance": 1
+   "name": "Joint Operation",
+   "clearance": 3
+   "pings": [
+      {
+        "name": "Operator",
+        "role_id": "1526704515984789754"
+      }
+    ]
   },
   {
-    "name": "External Deployment",
-    "clearance": 1
+   "name": "Joint Platoon Deployment",
+   "clearance": 2
+   "pings": [
+      {
+        "name": "Operator",
+        "role_id": "1526704515984789754"
+      }
+    ]
   },
   {
-    "name": "Gamenight",
-    "clearance": 1
+   "name": "Joint Squad Deployment",
+   "clearance": 1
+   "pings": [
+      {
+        "name": "Sabre",
+        "role_id": "1526577020329394227"
+      },
+      {
+        "name": "Leviathan",
+        "role_id": "1526577022120497203"
+      },
+      {
+        "name": "Stalker",
+        "role_id": "1526624995969601657"
+      },
+      {
+        "name": "Forerunner",
+        "role_id": "1526625003213164604"
+      }
+    ]
   },
   {
-    "name": "Movie Night",
-    "clearance": 1
+   "name": "External Deployment",
+   "clearance": 1
+   "pings": [
+      {
+        "name": "Operator",
+        "role_id": "1526704515984789754"
+      }
+    ]
+  },
+  {
+   "name": "Gamenight",
+   "clearance": 1
+   "pings": [
+      {
+        "name": "Operator",
+        "role_id": "1526704515984789754"
+      }
+    ]
+  },
+  {
+   "name": "Movie Night",
+   "clearance": 1
+   "pings": [
+      {
+        "name": "Operator",
+        "role_id": "1526704515984789754"
+      }
+    ]
   }
 ]
