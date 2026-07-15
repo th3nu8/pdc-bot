@@ -1,18 +1,54 @@
  [
   {
-    "name": "Certification Training",
-    "clearance": 2
-  },
-  {
     "name": "Squad Deployment",
-    "clearance": 3
+    "clearance": 1
   },
   {
     "name": "Platoon Deployment",
-    "clearance": 4
+    "clearance": 2
   },
   {
     "name": "Operation",
+    "clearance": 3
+  },
+  {
+    "name": "HICOM Selection",
     "clearance": 5
-  }
+  },
+  {
+    "name": "Officer Training",
+    "clearance": 4
+  },
+  {
+    "name": "SQL Training",
+    "clearance": 4
+  },
+  {
+    "name": "Certification Training",
+    "clearance": 4
+  },
+  {
+    "name": "Joint Operation",
+    "clearance": 3
+  },
+  {
+    "name": "Joint Platoon Deployment",
+    "clearance": 2
+  },
+  {
+    "name": "Joint Squad Deployment",
+    "clearance": 1
+  },
+  {
+    "name": "External Deployment",
+    "clearance": 1
+  },
+  {
+    "name": "Gamenight",
+    "clearance": 1
+  },
+  {
+    "name": "Movie Night",
+    "clearance": 1
+  },
 ]
