@@ -35,6 +35,8 @@ EVENT_PING_ROLE_ID = os.getenv("EVENT_PING_ROLE_ID")  # role pinged whenever /ev
 MONITOR_CHANNEL_ID = os.getenv("MONITOR_CHANNEL_ID")  # channel where up/down alerts are posted
 MONITOR_INTERVAL_MINUTES = int(os.getenv("MONITOR_INTERVAL_MINUTES", "5"))  # how often to check the sites
 
+MEMBER_COUNT_CHANNEL_ID = os.getenv("MEMBER_COUNT_CHANNEL_ID")  # channel for join/leave + live member count
+
 intents = discord.Intents.default()
 intents.members = True  # needed to resolve member display names
 
@@ -100,6 +102,57 @@ async def on_app_command_error(interaction: discord.Interaction, error: app_comm
         else:
             await interaction.response.send_message(f"Error: {error}", ephemeral=True)
         raise error
+
+
+async def _get_member_count_channel():
+    if not MEMBER_COUNT_CHANNEL_ID:
+        return None
+    channel = bot.get_channel(int(MEMBER_COUNT_CHANNEL_ID))
+    if channel is None:
+        try:
+            channel = await bot.fetch_channel(int(MEMBER_COUNT_CHANNEL_ID))
+        except discord.HTTPException:
+            print(f"MEMBER_COUNT skipped: could not access channel {MEMBER_COUNT_CHANNEL_ID}.")
+            return None
+    return channel
+
+
+@bot.event
+async def on_member_join(member: discord.Member):
+    channel = await _get_member_count_channel()
+    if channel is None:
+        return
+    embed = discord.Embed(
+        title="📥 Member Joined",
+        description=f"{member.mention} just joined the server!",
+        color=discord.Color.green(),
+    )
+    embed.add_field(name="Member Count", value=str(member.guild.member_count))
+    embed.set_thumbnail(url=member.display_avatar.url)
+    embed.timestamp = datetime.datetime.now(datetime.timezone.utc)
+    try:
+        await channel.send(embed=embed)
+    except discord.Forbidden:
+        print(f"MEMBER_COUNT: missing permission to send in channel {MEMBER_COUNT_CHANNEL_ID}")
+
+
+@bot.event
+async def on_member_remove(member: discord.Member):
+    channel = await _get_member_count_channel()
+    if channel is None:
+        return
+    embed = discord.Embed(
+        title="📤 Member Left",
+        description=f"{member} left the server.",
+        color=discord.Color.red(),
+    )
+    embed.add_field(name="Member Count", value=str(member.guild.member_count))
+    embed.set_thumbnail(url=member.display_avatar.url)
+    embed.timestamp = datetime.datetime.now(datetime.timezone.utc)
+    try:
+        await channel.send(embed=embed)
+    except discord.Forbidden:
+        print(f"MEMBER_COUNT: missing permission to send in channel {MEMBER_COUNT_CHANNEL_ID}")
 
 
 # ---------- /give ----------
