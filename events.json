@@ -1,18 +1,18 @@
  [
   {
     "name": "Certification Training",
-    "clearance": 1
-  },
-  {
-    "name": "Intructional Training",
     "clearance": 2
   },
   {
-    "name": "Patrol",
+    "name": "Squad Deployment",
     "clearance": 3
   },
   {
-    "name": "Operation",
+    "name": "Platoon Deployment",
     "clearance": 4
+  },
+  {
+    "name": "Operation",
+    "clearance": 5
   }
 ]
