@@ -1049,7 +1049,7 @@ async def _post_site_status(name: str, url: str, is_up: bool):
     if is_up:
         embed = discord.Embed(title=f"✅ {name} is back online", description=url, color=discord.Color.green())
     else:
-        embed = discord.Embed(title=f"🔴 {name} is down", description=url, color=discord.Color.red())
+        embed = discord.Embed(title=f"<@1526624123554496713>🔴 {name} is down", description=url, color=discord.Color.red())
     embed.timestamp = datetime.datetime.now(datetime.timezone.utc)
     await channel.send(embed=embed)
 
