@@ -58,6 +58,10 @@ def init_db():
         origin_channel_id INTEGER,
         event_name TEXT
     )""")
+    try:
+        c.execute("ALTER TABLE event_messages ADD COLUMN detachment_name TEXT")
+    except sqlite3.OperationalError:
+        pass  # column already exists from a previous run
     conn.commit()
     conn.close()
 
@@ -313,22 +317,26 @@ def set_site_status(name, is_up):
     conn.close()
 
 
-def create_event_message(message_id, origin_channel_id, event_name):
+def create_event_message(message_id, origin_channel_id, event_name, detachment_name=None):
     conn = get_conn()
     c = conn.cursor()
     c.execute(
-        "INSERT OR REPLACE INTO event_messages (message_id, origin_channel_id, event_name) VALUES (?, ?, ?)",
-        (message_id, origin_channel_id, event_name),
+        "INSERT OR REPLACE INTO event_messages (message_id, origin_channel_id, event_name, detachment_name) "
+        "VALUES (?, ?, ?, ?)",
+        (message_id, origin_channel_id, event_name, detachment_name),
     )
     conn.commit()
     conn.close()
 
 
 def get_event_message(message_id):
-    """Returns (origin_channel_id, event_name) for a tracked event message, or None."""
+    """Returns (origin_channel_id, event_name, detachment_name) for a tracked event message, or None."""
     conn = get_conn()
     c = conn.cursor()
-    c.execute("SELECT origin_channel_id, event_name FROM event_messages WHERE message_id=?", (message_id,))
+    c.execute(
+        "SELECT origin_channel_id, event_name, detachment_name FROM event_messages WHERE message_id=?",
+        (message_id,),
+    )
     row = c.fetchone()
     conn.close()
     return row
