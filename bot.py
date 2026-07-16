@@ -656,9 +656,18 @@ async def event_type_autocomplete(interaction: discord.Interaction, current: str
 
 
 async def detachment_autocomplete(interaction: discord.Interaction, current: str):
+    """Supports comma-separated multi-detachment input — only autocompletes the segment being typed."""
+    parts = [p.strip() for p in current.split(",")]
+    prefix = ", ".join(parts[:-1])
+    last = parts[-1].lower()
+    already_chosen = {p.lower() for p in parts[:-1]}
     names = detachments_config.detachment_names()
-    matches = [n for n in names if current.lower() in n.lower()]
-    return [app_commands.Choice(name=n, value=n) for n in matches[:25]]
+    matches = [n for n in names if last in n.lower() and n.lower() not in already_chosen]
+    choices = []
+    for n in matches[:25]:
+        value = f"{prefix}, {n}" if prefix else n
+        choices.append(app_commands.Choice(name=value, value=value))
+    return choices
 
 
 async def ping_autocomplete(interaction: discord.Interaction, current: str):
@@ -698,7 +707,7 @@ class EventTimeModal(discord.ui.Modal):
         host: discord.Member,
         origin_channel: discord.abc.Messageable,
         primary_role_id: str = None,
-        detachment: dict = None,
+        detachments: list = None,
     ):
         super().__init__(title=f"Schedule: {entry['name'][:30]}")
         self.entry = entry
@@ -706,7 +715,7 @@ class EventTimeModal(discord.ui.Modal):
         self.host = host
         self.origin_channel = origin_channel
         self.primary_role_id = primary_role_id
-        self.detachment = detachment
+        self.detachments = detachments or []
 
         self.date_input = discord.ui.TextInput(
             label="Date (MM/DD/YYYY)", placeholder="07/15/2026", required=True, max_length=10
@@ -783,55 +792,60 @@ class EventTimeModal(discord.ui.Modal):
         for emoji in ("✅", "🟨", "❌"):
             await main_message.add_reaction(emoji)
 
-        # A detachment, if picked, gets its own short ping message in its own channel —
-        # separate from the main event card. Reactions on it get relayed back here.
-        detachment_channel = None
-        if self.detachment:
-            det_channel_id = self.detachment.get("channel_id")
+        # Each detachment picked gets its own short ping message in its own channel —
+        # separate from the main event card. Reactions on them get relayed back here.
+        posted_to = []
+        failed = []
+        for det in self.detachments:
+            det_name = det.get("name", "Detachment")
+            det_channel_id = det.get("channel_id")
+            det_channel = None
             if det_channel_id and det_channel_id != "PUT_CHANNEL_ID_HERE":
-                fetched = interaction.client.get_channel(int(det_channel_id))
-                if fetched is None:
+                det_channel = interaction.client.get_channel(int(det_channel_id))
+                if det_channel is None:
                     try:
-                        fetched = await interaction.client.fetch_channel(int(det_channel_id))
+                        det_channel = await interaction.client.fetch_channel(int(det_channel_id))
                     except discord.HTTPException:
-                        fetched = None
-                detachment_channel = fetched
+                        det_channel = None
 
-            det_role_id = self.detachment.get("role_id")
+            if det_channel is None:
+                failed.append(det_name)
+                continue
+
+            det_role_id = det.get("role_id")
             det_role_id = det_role_id if det_role_id and det_role_id != "PUT_ROLE_ID_HERE" else None
-            det_name = self.detachment.get("name", "Detachment")
+            role_mention = f"<@&{det_role_id}>\n" if det_role_id else ""
+            det_content = f"{role_mention}**{det_name}** needed for **{self.entry['name']}**"
 
-            if detachment_channel is not None:
-                role_mention = f"<@&{det_role_id}>\n" if det_role_id else ""
-                det_content = f"{role_mention}**{det_name}** needed for **{self.entry['name']}**"
-                try:
-                    det_message = await detachment_channel.send(
-                        content=det_content,
-                        allowed_mentions=discord.AllowedMentions(roles=True, users=False, everyone=False),
-                    )
-                    for emoji in ("✅", "🟨", "❌"):
-                        await det_message.add_reaction(emoji)
-                    db.create_event_message(det_message.id, self.origin_channel.id, self.entry["name"])
-                except discord.Forbidden:
-                    detachment_channel = None  # fall through to the "couldn't post" notice below
+            try:
+                det_message = await det_channel.send(
+                    content=det_content,
+                    allowed_mentions=discord.AllowedMentions(roles=True, users=False, everyone=False),
+                )
+                for emoji in ("✅", "🟨", "❌"):
+                    await det_message.add_reaction(emoji)
+                db.create_event_message(det_message.id, self.origin_channel.id, self.entry["name"], det_name)
+                posted_to.append((det_name, det_channel))
+            except discord.Forbidden:
+                failed.append(det_name)
 
-        if self.detachment and detachment_channel is not None:
+        if posted_to:
+            summary = ", ".join(f"{name} ({ch.mention})" for name, ch in posted_to)
+            note = f"Event posted here, and pinged: {summary}. You'll get a notice here whenever someone reacts there."
+            if failed:
+                note += f"\nCouldn't post to: {', '.join(failed)} — check their channel_id/permissions."
+            await interaction.response.send_message(note, ephemeral=True)
+        elif failed:
             await interaction.response.send_message(
-                f"Event posted here, and pinged {self.detachment.get('name', 'the detachment')} in "
-                f"{detachment_channel.mention}. You'll get a notice here whenever someone reacts there.",
-                ephemeral=True,
-            )
-        elif self.detachment and detachment_channel is None:
-            await interaction.response.send_message(
-                "Event posted here, but I couldn't reach or post in that detachment's channel — check its "
-                "channel_id in detachments.json and the bot's permissions there.",
+                f"Event posted here, but I couldn't reach or post to: {', '.join(failed)} — "
+                "check their channel_id in detachments.json and the bot's permissions there.",
                 ephemeral=True,
             )
         else:
             await interaction.response.send_message("Event posted!", ephemeral=True)
 
 
-EVENT_RSVP_LABELS = {"✅": "✅ Attending", "🟨": "🟨 Maybe", "❌": "❌ Not Attending"}
+EVENT_RSVP_LABELS = {"✅": "✅ attending", "🟨": "🟨 maybe", "❌": "❌ not attending"}
 
 
 @bot.event
@@ -845,7 +859,7 @@ async def on_raw_reaction_add(payload: discord.RawReactionActionEvent):
     record = db.get_event_message(payload.message_id)
     if record is None:
         return
-    origin_channel_id, event_name = record
+    origin_channel_id, event_name, detachment_name = record
 
     origin_channel = bot.get_channel(origin_channel_id)
     if origin_channel is None:
@@ -855,9 +869,13 @@ async def on_raw_reaction_add(payload: discord.RawReactionActionEvent):
             return
 
     display = payload.member.mention if payload.member else f"<@{payload.user_id}>"
-    label = EVENT_RSVP_LABELS[emoji_str]
+    status = EVENT_RSVP_LABELS[emoji_str]
+    if detachment_name:
+        text = f"{display} reacted {status} to **{event_name}** as **{detachment_name}**."
+    else:
+        text = f"{display} reacted {status} to **{event_name}**."
     try:
-        await origin_channel.send(f"{display} reacted {label} to **{event_name}**.")
+        await origin_channel.send(text)
     except discord.Forbidden:
         print(f"EVENT_RSVP: missing permission to notify channel {origin_channel_id}")
 
@@ -868,10 +886,10 @@ async def on_raw_reaction_add(payload: discord.RawReactionActionEvent):
     event_type="Type of event (see events.json)",
     details="Optional extra details about the event",
     ping="Which group to ping for this event (only needed if the event type has more than one option)",
-    detachment="Also ping and post to a specific detachment's channel (optional, see detachments.json)",
+    detachments="Also ping and post to one or more detachments' channels — comma-separated (optional, see detachments.json)",
 )
-@app_commands.autocomplete(event_type=event_type_autocomplete, ping=ping_autocomplete, detachment=detachment_autocomplete)
-async def event(interaction: discord.Interaction, event_type: str, details: str = None, ping: str = None, detachment: str = None):
+@app_commands.autocomplete(event_type=event_type_autocomplete, ping=ping_autocomplete, detachments=detachment_autocomplete)
+async def event(interaction: discord.Interaction, event_type: str, details: str = None, ping: str = None, detachments: str = None):
     entry = events_config.find_event(event_type)
     if not entry:
         await interaction.response.send_message(
@@ -910,17 +928,25 @@ async def event(interaction: discord.Interaction, event_type: str, details: str 
     if primary_role_id == "PUT_ROLE_ID_HERE":
         primary_role_id = None
 
-    detachment_entry = None
-    if detachment:
-        detachment_entry = detachments_config.find_detachment(detachment)
-        if not detachment_entry:
+    detachment_entries = []
+    if detachments:
+        names = [n.strip() for n in detachments.split(",") if n.strip()]
+        unknown = []
+        for name in names:
+            found = detachments_config.find_detachment(name)
+            if found:
+                detachment_entries.append(found)
+            else:
+                unknown.append(name)
+        if unknown:
             await interaction.response.send_message(
-                f"Unknown detachment '{detachment}'. Check detachments.json for valid names.", ephemeral=True
+                f"Unknown detachment(s): {', '.join(unknown)}. Check detachments.json for valid names.",
+                ephemeral=True,
             )
             return
 
     await interaction.response.send_modal(
-        EventTimeModal(entry, details, interaction.user, interaction.channel, primary_role_id, detachment_entry)
+        EventTimeModal(entry, details, interaction.user, interaction.channel, primary_role_id, detachment_entries)
     )
 
 
