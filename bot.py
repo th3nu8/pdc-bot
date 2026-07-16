@@ -508,7 +508,7 @@ async def requestadmin(
         f"{role_pings}\n"
         f"{interaction.user.mention} is requesting **temporary admin access** for **{duration_amount} {unit_label}**."
         f"{reason_line}\n"
-        f"React ✅ to approve (needs approval from both pinged groups) or ❌ to deny."
+        f"React ✅ to approve (needs approval from both roles) or ❌ to deny."
     )
 
     try:
