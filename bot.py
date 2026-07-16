@@ -762,10 +762,30 @@ class EventTimeModal(discord.ui.Modal):
         embed.add_field(name="RSVP", value="✅ Attending  🟨 Maybe  ❌ Not Attending", inline=False)
         embed.set_footer(text=f"Hosted by {self.host.display_name}")
 
-        # Determine where the event gets posted: the detachment's channel if one was
-        # picked, otherwise the same channel /event was run in.
-        target_channel = self.origin_channel
-        detachment_role_id = None
+        # The main event card always posts in the channel /event was run in, pinging
+        # whichever role the event type's ping selection resolved to.
+        main_role_id = self.primary_role_id or EVENT_PING_ROLE_ID
+        main_content = f"<@&{main_role_id}>" if main_role_id else None
+
+        try:
+            main_message = await self.origin_channel.send(
+                content=main_content,
+                embed=embed,
+                allowed_mentions=discord.AllowedMentions(roles=True, users=False, everyone=False),
+            )
+        except discord.Forbidden:
+            await interaction.response.send_message(
+                "I don't have permission to post in this channel. Check the bot's permissions here.",
+                ephemeral=True,
+            )
+            return
+
+        for emoji in ("✅", "🟨", "❌"):
+            await main_message.add_reaction(emoji)
+
+        # A detachment, if picked, gets its own short ping message in its own channel —
+        # separate from the main event card. Reactions on it get relayed back here.
+        detachment_channel = None
         if self.detachment:
             det_channel_id = self.detachment.get("channel_id")
             if det_channel_id and det_channel_id != "PUT_CHANNEL_ID_HERE":
@@ -775,45 +795,36 @@ class EventTimeModal(discord.ui.Modal):
                         fetched = await interaction.client.fetch_channel(int(det_channel_id))
                     except discord.HTTPException:
                         fetched = None
-                if fetched is not None:
-                    target_channel = fetched
+                detachment_channel = fetched
+
             det_role_id = self.detachment.get("role_id")
-            if det_role_id and det_role_id != "PUT_ROLE_ID_HERE":
-                detachment_role_id = det_role_id
+            det_role_id = det_role_id if det_role_id and det_role_id != "PUT_ROLE_ID_HERE" else None
+            det_name = self.detachment.get("name", "Detachment")
 
-        # Two independent pings can both apply: the event type's chosen ping (posted
-        # wherever the event ends up), and the detachment's own ping (only if a
-        # detachment was picked). Combine and dedupe.
-        role_ids = []
-        if self.primary_role_id:
-            role_ids.append(self.primary_role_id)
-        if detachment_role_id and detachment_role_id not in role_ids:
-            role_ids.append(detachment_role_id)
-        if not role_ids and EVENT_PING_ROLE_ID:
-            role_ids.append(EVENT_PING_ROLE_ID)
-        content = " ".join(f"<@&{r}>" for r in role_ids) if role_ids else None
+            if detachment_channel is not None:
+                role_mention = f"<@&{det_role_id}>\n" if det_role_id else ""
+                det_content = f"{role_mention}**{det_name}** needed for **{self.entry['name']}**"
+                try:
+                    det_message = await detachment_channel.send(
+                        content=det_content,
+                        allowed_mentions=discord.AllowedMentions(roles=True, users=False, everyone=False),
+                    )
+                    for emoji in ("✅", "🟨", "❌"):
+                        await det_message.add_reaction(emoji)
+                    db.create_event_message(det_message.id, self.origin_channel.id, self.entry["name"])
+                except discord.Forbidden:
+                    detachment_channel = None  # fall through to the "couldn't post" notice below
 
-        try:
-            message = await target_channel.send(
-                content=content,
-                embed=embed,
-                allowed_mentions=discord.AllowedMentions(roles=True, users=False, everyone=False),
-            )
-        except discord.Forbidden:
+        if self.detachment and detachment_channel is not None:
             await interaction.response.send_message(
-                "I don't have permission to post in that detachment's channel. Check the bot's permissions there.",
+                f"Event posted here, and pinged {self.detachment.get('name', 'the detachment')} in "
+                f"{detachment_channel.mention}. You'll get a notice here whenever someone reacts there.",
                 ephemeral=True,
             )
-            return
-
-        for emoji in ("✅", "🟨", "❌"):
-            await message.add_reaction(emoji)
-
-        db.create_event_message(message.id, self.origin_channel.id, self.entry["name"])
-
-        if target_channel.id != self.origin_channel.id:
+        elif self.detachment and detachment_channel is None:
             await interaction.response.send_message(
-                f"Event posted in {target_channel.mention}. You'll get a notice here whenever someone reacts to it.",
+                "Event posted here, but I couldn't reach or post in that detachment's channel — check its "
+                "channel_id in detachments.json and the bot's permissions there.",
                 ephemeral=True,
             )
         else:
@@ -1049,7 +1060,7 @@ async def _post_site_status(name: str, url: str, is_up: bool):
     if is_up:
         embed = discord.Embed(title=f"✅ {name} is back online", description=url, color=discord.Color.green())
     else:
-        embed = discord.Embed(title=f"<@1526624123554496713>🔴 {name} is down", description=url, color=discord.Color.red())
+        embed = discord.Embed(title=f"🔴 {name} is down", description=url, color=discord.Color.red())
     embed.timestamp = datetime.datetime.now(datetime.timezone.utc)
     await channel.send(embed=embed)
 
