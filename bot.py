@@ -37,7 +37,11 @@ EVENT_PING_ROLE_ID = os.getenv("EVENT_PING_ROLE_ID")  # role pinged whenever /ev
 MONITOR_CHANNEL_ID = os.getenv("MONITOR_CHANNEL_ID")  # channel where up/down alerts are posted
 MONITOR_INTERVAL_MINUTES = int(os.getenv("MONITOR_INTERVAL_MINUTES", "5"))  # how often to check the sites
 
-MEMBER_COUNT_CHANNEL_ID = os.getenv("MEMBER_COUNT_CHANNEL_ID")  # channel for join/leave + live member count
+ADMIN_REQUEST_ROLE_ID = os.getenv("ADMIN_REQUEST_ROLE_ID")  # who is allowed to run /requestadmin
+ADMIN_REQUEST_APPROVER_ROLE_1 = os.getenv("ADMIN_REQUEST_APPROVER_ROLE_1")  # first role that must approve
+ADMIN_REQUEST_APPROVER_ROLE_2 = os.getenv("ADMIN_REQUEST_APPROVER_ROLE_2")  # second role that must approve
+ADMIN_REQUEST_CHANNEL_ID = os.getenv("ADMIN_REQUEST_CHANNEL_ID")  # where requests get posted
+ADMIN_REQUEST_GRANT_ROLE_ID = os.getenv("ADMIN_REQUEST_GRANT_ROLE_ID")  # role granted temporarily on approval
 
 intents = discord.Intents.default()
 intents.members = True  # needed to resolve member display names
@@ -89,6 +93,8 @@ async def on_ready():
         activity_check_loop.start()
     if not site_monitor_loop.is_running():
         site_monitor_loop.start()
+    if not admin_request_expiry_loop.is_running():
+        admin_request_expiry_loop.start()
     print(f"Logged in as {bot.user} | synced {len(synced)} commands")
 
 
@@ -104,57 +110,6 @@ async def on_app_command_error(interaction: discord.Interaction, error: app_comm
         else:
             await interaction.response.send_message(f"Error: {error}", ephemeral=True)
         raise error
-
-
-async def _get_member_count_channel():
-    if not MEMBER_COUNT_CHANNEL_ID:
-        return None
-    channel = bot.get_channel(int(MEMBER_COUNT_CHANNEL_ID))
-    if channel is None:
-        try:
-            channel = await bot.fetch_channel(int(MEMBER_COUNT_CHANNEL_ID))
-        except discord.HTTPException:
-            print(f"MEMBER_COUNT skipped: could not access channel {MEMBER_COUNT_CHANNEL_ID}.")
-            return None
-    return channel
-
-
-@bot.event
-async def on_member_join(member: discord.Member):
-    channel = await _get_member_count_channel()
-    if channel is None:
-        return
-    embed = discord.Embed(
-        title="📥 Member Joined",
-        description=f"{member.mention} just joined the server!",
-        color=discord.Color.green(),
-    )
-    embed.add_field(name="Member Count", value=str(member.guild.member_count))
-    embed.set_thumbnail(url=member.display_avatar.url)
-    embed.timestamp = datetime.datetime.now(datetime.timezone.utc)
-    try:
-        await channel.send(embed=embed)
-    except discord.Forbidden:
-        print(f"MEMBER_COUNT: missing permission to send in channel {MEMBER_COUNT_CHANNEL_ID}")
-
-
-@bot.event
-async def on_member_remove(member: discord.Member):
-    channel = await _get_member_count_channel()
-    if channel is None:
-        return
-    embed = discord.Embed(
-        title="📤 Member Left",
-        description=f"{member} left the server.",
-        color=discord.Color.red(),
-    )
-    embed.add_field(name="Member Count", value=str(member.guild.member_count))
-    embed.set_thumbnail(url=member.display_avatar.url)
-    embed.timestamp = datetime.datetime.now(datetime.timezone.utc)
-    try:
-        await channel.send(embed=embed)
-    except discord.Forbidden:
-        print(f"MEMBER_COUNT: missing permission to send in channel {MEMBER_COUNT_CHANNEL_ID}")
 
 
 # ---------- /give ----------
@@ -490,6 +445,129 @@ async def remove_award(interaction: discord.Interaction, user: discord.Member, a
     embed.set_footer(text=f"Removed by {interaction.user.display_name}")
     await interaction.response.send_message(embed=embed)
     await post_log(embed)
+
+
+def is_admin_requester():
+    async def predicate(interaction: discord.Interaction) -> bool:
+        if not ADMIN_REQUEST_ROLE_ID:
+            return False
+        role = interaction.guild.get_role(int(ADMIN_REQUEST_ROLE_ID))
+        return bool(role and role in interaction.user.roles)
+    return app_commands.check(predicate)
+
+
+ADMIN_REQUEST_DURATION_SECONDS = {"hours": 3600, "days": 86400, "weeks": 604800}
+ADMIN_REQUEST_MAX_SECONDS = 14 * 86400  # 2 weeks
+
+
+# ---------- /requestadmin ----------
+@bot.tree.command(name="requestadmin", description="Request temporary admin access (requires approval from both approver groups)")
+@app_commands.describe(
+    duration_amount="How long the access should last (max 2 weeks total)",
+    duration_unit="Unit for the duration",
+    reason="Optional reason for the request",
+)
+@app_commands.choices(duration_unit=[
+    app_commands.Choice(name="Hours", value="hours"),
+    app_commands.Choice(name="Days", value="days"),
+    app_commands.Choice(name="Weeks", value="weeks"),
+])
+@is_admin_requester()
+async def requestadmin(
+    interaction: discord.Interaction,
+    duration_amount: int,
+    duration_unit: app_commands.Choice[str],
+    reason: str = None,
+):
+    if duration_amount <= 0:
+        await interaction.response.send_message("Duration must be positive.", ephemeral=True)
+        return
+
+    duration_seconds = duration_amount * ADMIN_REQUEST_DURATION_SECONDS[duration_unit.value]
+    if duration_seconds > ADMIN_REQUEST_MAX_SECONDS:
+        await interaction.response.send_message("Duration can't be more than 2 weeks.", ephemeral=True)
+        return
+
+    if not ADMIN_REQUEST_CHANNEL_ID:
+        await interaction.response.send_message("ADMIN_REQUEST_CHANNEL_ID is not configured.", ephemeral=True)
+        return
+    channel = bot.get_channel(int(ADMIN_REQUEST_CHANNEL_ID))
+    if channel is None:
+        try:
+            channel = await bot.fetch_channel(int(ADMIN_REQUEST_CHANNEL_ID))
+        except discord.HTTPException:
+            await interaction.response.send_message("Couldn't access the admin request channel.", ephemeral=True)
+            return
+
+    role_pings = " ".join(
+        f"<@&{r}>" for r in (ADMIN_REQUEST_APPROVER_ROLE_1, ADMIN_REQUEST_APPROVER_ROLE_2) if r
+    )
+    unit_label = duration_unit.name.lower()
+    reason_line = f"\nReason: {reason}" if reason else ""
+    content = (
+        f"{role_pings}\n"
+        f"{interaction.user.mention} is requesting **temporary admin access** for **{duration_amount} {unit_label}**."
+        f"{reason_line}\n"
+        f"React ✅ to approve (needs approval from both pinged groups) or ❌ to deny."
+    )
+
+    try:
+        message = await channel.send(
+            content,
+            allowed_mentions=discord.AllowedMentions(roles=True, users=True, everyone=False),
+        )
+    except discord.Forbidden:
+        await interaction.response.send_message("I don't have permission to post in that channel.", ephemeral=True)
+        return
+
+    for emoji in ("✅", "❌"):
+        await message.add_reaction(emoji)
+
+    db.create_admin_request(message.id, interaction.user.id, channel.id, interaction.guild.id, duration_seconds)
+
+    await interaction.response.send_message("Your admin access request has been posted for approval.", ephemeral=True)
+
+
+@tasks.loop(minutes=5)
+async def admin_request_expiry_loop():
+    now = datetime.datetime.now(datetime.timezone.utc)
+    for message_id, requester_id, channel_id, guild_id in db.get_expired_admin_requests(now.isoformat()):
+        db.mark_admin_request_expired(message_id)
+
+        guild = bot.get_guild(guild_id)
+        member = None
+        if guild is not None:
+            member = guild.get_member(requester_id)
+            if member is None:
+                try:
+                    member = await guild.fetch_member(requester_id)
+                except discord.HTTPException:
+                    member = None
+
+        if member is not None and ADMIN_REQUEST_GRANT_ROLE_ID:
+            role = guild.get_role(int(ADMIN_REQUEST_GRANT_ROLE_ID))
+            if role is not None and role in member.roles:
+                try:
+                    await member.remove_roles(role, reason="Temporary admin access expired")
+                except discord.Forbidden:
+                    print(f"ADMIN_REQUEST: missing permission to remove expired role from {requester_id}")
+
+        channel = bot.get_channel(channel_id)
+        if channel is None:
+            try:
+                channel = await bot.fetch_channel(channel_id)
+            except discord.HTTPException:
+                channel = None
+        if channel is not None:
+            try:
+                await channel.send(f"⏱️ Temporary admin access for <@{requester_id}> has expired and the role was removed.")
+            except discord.Forbidden:
+                pass
+
+
+@admin_request_expiry_loop.before_loop
+async def before_admin_request_expiry_loop():
+    await bot.wait_until_ready()
 
 
 def _chunk_text(text, limit=1900):
@@ -848,36 +926,126 @@ class EventTimeModal(discord.ui.Modal):
 EVENT_RSVP_LABELS = {"✅": "✅ attending", "🟨": "🟨 maybe", "❌": "❌ not attending"}
 
 
+async def _handle_admin_request_reaction(payload: discord.RawReactionActionEvent, request):
+    message_id, requester_id, channel_id, guild_id, duration_seconds, role1_approved, role2_approved, status, expires_at = request
+    if status != "pending":
+        return
+
+    guild = bot.get_guild(guild_id)
+    if guild is None:
+        return
+
+    member = payload.member
+    if member is None:
+        member = guild.get_member(payload.user_id)
+    if member is None:
+        try:
+            member = await guild.fetch_member(payload.user_id)
+        except discord.HTTPException:
+            return
+    member_role_ids = {r.id for r in member.roles}
+
+    channel = bot.get_channel(channel_id)
+    if channel is None:
+        try:
+            channel = await bot.fetch_channel(channel_id)
+        except discord.HTTPException:
+            channel = None
+
+    emoji_str = str(payload.emoji)
+
+    if emoji_str == "❌":
+        is_approver = (
+            (ADMIN_REQUEST_APPROVER_ROLE_1 and int(ADMIN_REQUEST_APPROVER_ROLE_1) in member_role_ids)
+            or (ADMIN_REQUEST_APPROVER_ROLE_2 and int(ADMIN_REQUEST_APPROVER_ROLE_2) in member_role_ids)
+        )
+        if not is_approver:
+            return
+        db.deny_admin_request(message_id)
+        if channel is not None:
+            try:
+                await channel.send(f"❌ Denied by {member.mention} — <@{requester_id}>'s admin access request was not approved.")
+            except discord.Forbidden:
+                pass
+        return
+
+    if emoji_str == "✅":
+        new_role1, new_role2 = bool(role1_approved), bool(role2_approved)
+        changed = False
+        if ADMIN_REQUEST_APPROVER_ROLE_1 and int(ADMIN_REQUEST_APPROVER_ROLE_1) in member_role_ids and not new_role1:
+            new_role1 = True
+            changed = True
+        if ADMIN_REQUEST_APPROVER_ROLE_2 and int(ADMIN_REQUEST_APPROVER_ROLE_2) in member_role_ids and not new_role2:
+            new_role2 = True
+            changed = True
+        if changed:
+            db.set_admin_request_approval(message_id, role1=new_role1, role2=new_role2)
+
+        if new_role1 and new_role2:
+            requester = guild.get_member(requester_id)
+            if requester is None:
+                try:
+                    requester = await guild.fetch_member(requester_id)
+                except discord.HTTPException:
+                    requester = None
+
+            expires_dt = datetime.datetime.now(datetime.timezone.utc) + datetime.timedelta(seconds=duration_seconds)
+
+            if requester is not None and ADMIN_REQUEST_GRANT_ROLE_ID:
+                role = guild.get_role(int(ADMIN_REQUEST_GRANT_ROLE_ID))
+                if role is not None:
+                    try:
+                        await requester.add_roles(role, reason="Approved temporary admin request")
+                    except discord.Forbidden:
+                        print(f"ADMIN_REQUEST: missing permission to grant role to {requester_id}")
+
+            db.approve_admin_request(message_id, expires_dt.isoformat())
+
+            if channel is not None:
+                ts = int(expires_dt.timestamp())
+                mention = requester.mention if requester else f"<@{requester_id}>"
+                try:
+                    await channel.send(
+                        f"✅ Approved — {mention} has been granted temporary admin access until "
+                        f"<t:{ts}:F> (<t:{ts}:R>)."
+                    )
+                except discord.Forbidden:
+                    pass
+
+
 @bot.event
 async def on_raw_reaction_add(payload: discord.RawReactionActionEvent):
     if payload.user_id == bot.user.id:
         return
     emoji_str = str(payload.emoji)
-    if emoji_str not in EVENT_RSVP_LABELS:
-        return
 
-    record = db.get_event_message(payload.message_id)
-    if record is None:
-        return
-    origin_channel_id, event_name, detachment_name = record
-
-    origin_channel = bot.get_channel(origin_channel_id)
-    if origin_channel is None:
-        try:
-            origin_channel = await bot.fetch_channel(origin_channel_id)
-        except discord.HTTPException:
+    if emoji_str in EVENT_RSVP_LABELS:
+        record = db.get_event_message(payload.message_id)
+        if record is not None:
+            origin_channel_id, event_name, detachment_name = record
+            origin_channel = bot.get_channel(origin_channel_id)
+            if origin_channel is None:
+                try:
+                    origin_channel = await bot.fetch_channel(origin_channel_id)
+                except discord.HTTPException:
+                    origin_channel = None
+            if origin_channel is not None:
+                display = payload.member.mention if payload.member else f"<@{payload.user_id}>"
+                status = EVENT_RSVP_LABELS[emoji_str]
+                if detachment_name:
+                    text = f"{display} reacted {status} to **{event_name}** as **{detachment_name}**."
+                else:
+                    text = f"{display} reacted {status} to **{event_name}**."
+                try:
+                    await origin_channel.send(text)
+                except discord.Forbidden:
+                    print(f"EVENT_RSVP: missing permission to notify channel {origin_channel_id}")
             return
 
-    display = payload.member.mention if payload.member else f"<@{payload.user_id}>"
-    status = EVENT_RSVP_LABELS[emoji_str]
-    if detachment_name:
-        text = f"{display} reacted {status} to **{event_name}** as **{detachment_name}**."
-    else:
-        text = f"{display} reacted {status} to **{event_name}**."
-    try:
-        await origin_channel.send(text)
-    except discord.Forbidden:
-        print(f"EVENT_RSVP: missing permission to notify channel {origin_channel_id}")
+    if emoji_str in ("✅", "❌"):
+        admin_request = db.get_admin_request(payload.message_id)
+        if admin_request is not None:
+            await _handle_admin_request_reaction(payload, admin_request)
 
 
 # ---------- /event ----------
