@@ -62,6 +62,19 @@ def init_db():
         c.execute("ALTER TABLE event_messages ADD COLUMN detachment_name TEXT")
     except sqlite3.OperationalError:
         pass  # column already exists from a previous run
+    c.execute("""CREATE TABLE IF NOT EXISTS admin_requests (
+        message_id INTEGER PRIMARY KEY,
+        requester_id INTEGER,
+        channel_id INTEGER,
+        guild_id INTEGER,
+        duration_seconds INTEGER,
+        role1_approved INTEGER DEFAULT 0,
+        role2_approved INTEGER DEFAULT 0,
+        status TEXT DEFAULT 'pending',
+        granted_at TEXT,
+        expires_at TEXT,
+        created_at TEXT
+    )""")
     conn.commit()
     conn.close()
 
@@ -340,3 +353,82 @@ def get_event_message(message_id):
     row = c.fetchone()
     conn.close()
     return row
+
+
+def create_admin_request(message_id, requester_id, channel_id, guild_id, duration_seconds):
+    conn = get_conn()
+    c = conn.cursor()
+    c.execute(
+        "INSERT INTO admin_requests (message_id, requester_id, channel_id, guild_id, duration_seconds, "
+        "role1_approved, role2_approved, status, created_at) VALUES (?, ?, ?, ?, ?, 0, 0, 'pending', ?)",
+        (message_id, requester_id, channel_id, guild_id, duration_seconds, datetime.now(timezone.utc).isoformat()),
+    )
+    conn.commit()
+    conn.close()
+
+
+def get_admin_request(message_id):
+    """Returns (message_id, requester_id, channel_id, guild_id, duration_seconds, role1_approved, role2_approved,
+    status, expires_at) or None."""
+    conn = get_conn()
+    c = conn.cursor()
+    c.execute(
+        "SELECT message_id, requester_id, channel_id, guild_id, duration_seconds, role1_approved, role2_approved, "
+        "status, expires_at FROM admin_requests WHERE message_id=?",
+        (message_id,),
+    )
+    row = c.fetchone()
+    conn.close()
+    return row
+
+
+def set_admin_request_approval(message_id, role1=None, role2=None):
+    conn = get_conn()
+    c = conn.cursor()
+    if role1 is not None:
+        c.execute("UPDATE admin_requests SET role1_approved=? WHERE message_id=?", (int(role1), message_id))
+    if role2 is not None:
+        c.execute("UPDATE admin_requests SET role2_approved=? WHERE message_id=?", (int(role2), message_id))
+    conn.commit()
+    conn.close()
+
+
+def approve_admin_request(message_id, expires_at_iso):
+    conn = get_conn()
+    c = conn.cursor()
+    c.execute(
+        "UPDATE admin_requests SET status='approved', granted_at=?, expires_at=? WHERE message_id=?",
+        (datetime.now(timezone.utc).isoformat(), expires_at_iso, message_id),
+    )
+    conn.commit()
+    conn.close()
+
+
+def deny_admin_request(message_id):
+    conn = get_conn()
+    c = conn.cursor()
+    c.execute("UPDATE admin_requests SET status='denied' WHERE message_id=?", (message_id,))
+    conn.commit()
+    conn.close()
+
+
+def get_expired_admin_requests(now_iso):
+    """Approved requests whose expires_at has passed and haven't been cleaned up yet."""
+    conn = get_conn()
+    c = conn.cursor()
+    c.execute(
+        "SELECT message_id, requester_id, channel_id, guild_id FROM admin_requests "
+        "WHERE status='approved' AND expires_at<=?",
+        (now_iso,),
+    )
+    rows = c.fetchall()
+    conn.close()
+    return rows
+
+
+def mark_admin_request_expired(message_id):
+    conn = get_conn()
+    c = conn.cursor()
+    c.execute("UPDATE admin_requests SET status='expired' WHERE message_id=?", (message_id,))
+    conn.commit()
+    conn.close()
