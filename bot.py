@@ -16,32 +16,55 @@ import detachments_config
 
 load_dotenv()
 
+
+def _parse_role_ids(env_value: str) -> set:
+    """Parses a comma-separated list of role IDs from an env var into a set of ints. Empty/None -> empty set."""
+    if not env_value:
+        return set()
+    ids = set()
+    for part in env_value.split(","):
+        part = part.strip()
+        if part.isdigit():
+            ids.add(int(part))
+    return ids
+
+
 TOKEN = os.getenv("DISCORD_TOKEN")
 GUILD_ID = os.getenv("GUILD_ID")  # optional: set for instant command sync during testing
-ADMIN_ROLE_ID = os.getenv("VP_ADMIN_ROLE_ID")  # optional: role allowed to manage VP besides Administrators
+ADMIN_ROLE_ID = os.getenv("VP_ADMIN_ROLE_ID")  # optional: role(s) allowed to manage VP besides Administrators (comma-separated for multiple)
+ADMIN_ROLE_IDS = _parse_role_ids(ADMIN_ROLE_ID)
 LOG_CHANNEL_ID = os.getenv("LOG_CHANNEL_ID")  # optional: channel that receives a copy of every give/take/setvp
 MONTHLY_ALERT_CHANNEL_ID = os.getenv("MONTHLY_ALERT_CHANNEL_ID")  # channel for the low-VP monthly notice
-MONTHLY_ALERT_ROLE_ID = os.getenv("MONTHLY_ALERT_ROLE_ID")  # role to ping in that notice
-MONTHLY_CHECK_ROLE_ID = os.getenv("MONTHLY_CHECK_ROLE_ID")  # if set, only members with this role are checked at all
-MONTHLY_CHECK_EXEMPT_ROLE_ID = os.getenv("MONTHLY_CHECK_EXEMPT_ROLE_ID")  # members with this role skip the monthly check entirely
+MONTHLY_ALERT_ROLE_ID = os.getenv("MONTHLY_ALERT_ROLE_ID")  # role(s) to ping in that notice (comma-separated for multiple)
+MONTHLY_ALERT_ROLE_IDS = _parse_role_ids(MONTHLY_ALERT_ROLE_ID)
+MONTHLY_CHECK_ROLE_ID = os.getenv("MONTHLY_CHECK_ROLE_ID")  # if set, only members with one of these roles are checked at all (comma-separated for multiple)
+MONTHLY_CHECK_ROLE_IDS = _parse_role_ids(MONTHLY_CHECK_ROLE_ID)
+MONTHLY_CHECK_EXEMPT_ROLE_ID = os.getenv("MONTHLY_CHECK_EXEMPT_ROLE_ID")  # members with any of these roles skip the monthly check entirely (comma-separated for multiple)
+MONTHLY_CHECK_EXEMPT_ROLE_IDS = _parse_role_ids(MONTHLY_CHECK_EXEMPT_ROLE_ID)
 MIN_MONTHLY_VP = int(os.getenv("MIN_MONTHLY_VP", "4"))  # threshold for the monthly check
 
 ACTIVITY_CHECK_CHANNEL_ID = os.getenv("ACTIVITY_CHECK_CHANNEL_ID")  # channel where the monthly activity check is posted
 ACTIVITY_CHECK_PING_ROLE_IDS = [r.strip() for r in os.getenv("ACTIVITY_CHECK_PING_ROLE_IDS", "").split(",") if r.strip()]
-ACTIVITY_CHECK_EXEMPT_ROLE_ID = os.getenv("ACTIVITY_CHECK_EXEMPT_ROLE_ID")  # members with this role are never reported as non-reactors
+ACTIVITY_CHECK_EXEMPT_ROLE_ID = os.getenv("ACTIVITY_CHECK_EXEMPT_ROLE_ID")  # members with any of these roles are never reported as non-reactors (comma-separated for multiple)
+ACTIVITY_CHECK_EXEMPT_ROLE_IDS = _parse_role_ids(ACTIVITY_CHECK_EXEMPT_ROLE_ID)
 ACTIVITY_CHECK_DM_USER_ID = os.getenv("ACTIVITY_CHECK_DM_USER_ID")  # user who receives the non-reactor DM summary
 ACTIVITY_CHECK_DAYS = int(os.getenv("ACTIVITY_CHECK_DAYS", "14"))  # how many days members have to react
 
-EVENT_PING_ROLE_ID = os.getenv("EVENT_PING_ROLE_ID")  # role pinged whenever /event posts a new announcement
+EVENT_PING_ROLE_ID = os.getenv("EVENT_PING_ROLE_ID")  # role(s) pinged whenever /event posts a new announcement with no other ping configured (comma-separated for multiple)
+EVENT_PING_ROLE_IDS = _parse_role_ids(EVENT_PING_ROLE_ID)
 
 MONITOR_CHANNEL_ID = os.getenv("MONITOR_CHANNEL_ID")  # channel where up/down alerts are posted
 MONITOR_INTERVAL_MINUTES = int(os.getenv("MONITOR_INTERVAL_MINUTES", "5"))  # how often to check the sites
 
-ADMIN_REQUEST_ROLE_ID = os.getenv("ADMIN_REQUEST_ROLE_ID")  # who is allowed to run /requestadmin
-ADMIN_REQUEST_APPROVER_ROLE_1 = os.getenv("ADMIN_REQUEST_APPROVER_ROLE_1")  # first role that must approve
-ADMIN_REQUEST_APPROVER_ROLE_2 = os.getenv("ADMIN_REQUEST_APPROVER_ROLE_2")  # second role that must approve
+ADMIN_REQUEST_ROLE_ID = os.getenv("ADMIN_REQUEST_ROLE_ID")  # who is allowed to run /requestadmin (comma-separated for multiple)
+ADMIN_REQUEST_ROLE_IDS = _parse_role_ids(ADMIN_REQUEST_ROLE_ID)
+ADMIN_REQUEST_APPROVER_ROLE_1 = os.getenv("ADMIN_REQUEST_APPROVER_ROLE_1")  # first approver group (comma-separated for multiple)
+ADMIN_REQUEST_APPROVER_ROLE_1_IDS = _parse_role_ids(ADMIN_REQUEST_APPROVER_ROLE_1)
+ADMIN_REQUEST_APPROVER_ROLE_2 = os.getenv("ADMIN_REQUEST_APPROVER_ROLE_2")  # second approver group (comma-separated for multiple)
+ADMIN_REQUEST_APPROVER_ROLE_2_IDS = _parse_role_ids(ADMIN_REQUEST_APPROVER_ROLE_2)
 ADMIN_REQUEST_CHANNEL_ID = os.getenv("ADMIN_REQUEST_CHANNEL_ID")  # where requests get posted
-ADMIN_REQUEST_GRANT_ROLE_ID = os.getenv("ADMIN_REQUEST_GRANT_ROLE_ID")  # role granted temporarily on approval
+ADMIN_REQUEST_GRANT_ROLE_ID = os.getenv("ADMIN_REQUEST_GRANT_ROLE_ID")  # role(s) granted on approval (comma-separated for multiple)
+ADMIN_REQUEST_GRANT_ROLE_IDS = _parse_role_ids(ADMIN_REQUEST_GRANT_ROLE_ID)
 
 intents = discord.Intents.default()
 intents.members = True  # needed to resolve member display names
@@ -53,9 +76,9 @@ def is_vp_admin():
     async def predicate(interaction: discord.Interaction) -> bool:
         if interaction.user.guild_permissions.administrator:
             return True
-        if ADMIN_ROLE_ID:
-            role = interaction.guild.get_role(int(ADMIN_ROLE_ID))
-            if role and role in interaction.user.roles:
+        if ADMIN_ROLE_IDS:
+            member_role_ids = {r.id for r in interaction.user.roles}
+            if ADMIN_ROLE_IDS & member_role_ids:
                 return True
         return False
     return app_commands.check(predicate)
@@ -449,10 +472,10 @@ async def remove_award(interaction: discord.Interaction, user: discord.Member, a
 
 def is_admin_requester():
     async def predicate(interaction: discord.Interaction) -> bool:
-        if not ADMIN_REQUEST_ROLE_ID:
+        if not ADMIN_REQUEST_ROLE_IDS:
             return False
-        role = interaction.guild.get_role(int(ADMIN_REQUEST_ROLE_ID))
-        return bool(role and role in interaction.user.roles)
+        member_role_ids = {r.id for r in interaction.user.roles}
+        return bool(ADMIN_REQUEST_ROLE_IDS & member_role_ids)
     return app_commands.check(predicate)
 
 
@@ -499,16 +522,15 @@ async def requestadmin(
             await interaction.response.send_message("Couldn't access the admin request channel.", ephemeral=True)
             return
 
-    role_pings = " ".join(
-        f"<@&{r}>" for r in (ADMIN_REQUEST_APPROVER_ROLE_1, ADMIN_REQUEST_APPROVER_ROLE_2) if r
-    )
+    all_approver_roles = ADMIN_REQUEST_APPROVER_ROLE_1_IDS | ADMIN_REQUEST_APPROVER_ROLE_2_IDS
+    role_pings = " ".join(f"<@&{r}>" for r in all_approver_roles)
     unit_label = duration_unit.name.lower()
     reason_line = f"\nReason: {reason}" if reason else ""
     content = (
         f"{role_pings}\n"
         f"{interaction.user.mention} is requesting **temporary admin access** for **{duration_amount} {unit_label}**."
         f"{reason_line}\n"
-        f"React ✅ to approve (needs approval from both roles) or ❌ to deny."
+        f"React ✅ to approve (needs approval from both pinged groups) or ❌ to deny."
     )
 
     try:
@@ -544,13 +566,14 @@ async def admin_request_expiry_loop():
                 except discord.HTTPException:
                     member = None
 
-        if member is not None and ADMIN_REQUEST_GRANT_ROLE_ID:
-            role = guild.get_role(int(ADMIN_REQUEST_GRANT_ROLE_ID))
-            if role is not None and role in member.roles:
+        if member is not None and ADMIN_REQUEST_GRANT_ROLE_IDS:
+            roles_to_remove = [guild.get_role(rid) for rid in ADMIN_REQUEST_GRANT_ROLE_IDS]
+            roles_to_remove = [r for r in roles_to_remove if r is not None and r in member.roles]
+            if roles_to_remove:
                 try:
-                    await member.remove_roles(role, reason="Temporary admin access expired")
+                    await member.remove_roles(*roles_to_remove, reason="Temporary admin access expired")
                 except discord.Forbidden:
-                    print(f"ADMIN_REQUEST: missing permission to remove expired role from {requester_id}")
+                    print(f"ADMIN_REQUEST: missing permission to remove expired role(s) from {requester_id}")
 
         channel = bot.get_channel(channel_id)
         if channel is None:
@@ -648,7 +671,7 @@ async def _finalize_activity_check(check_id: int, channel_id: int, message_id: i
                 continue
             if member.id in reactors:
                 continue
-            if ACTIVITY_CHECK_EXEMPT_ROLE_ID and any(str(r.id) == ACTIVITY_CHECK_EXEMPT_ROLE_ID for r in member.roles):
+            if ACTIVITY_CHECK_EXEMPT_ROLE_IDS and (ACTIVITY_CHECK_EXEMPT_ROLE_IDS & {r.id for r in member.roles}):
                 continue
             if ACTIVITY_CHECK_PING_ROLE_IDS and not any(str(r.id) in ACTIVITY_CHECK_PING_ROLE_IDS for r in member.roles):
                 continue
@@ -850,9 +873,14 @@ class EventTimeModal(discord.ui.Modal):
         embed.set_footer(text=f"Hosted by {self.host.display_name}")
 
         # The main event card always posts in the channel /event was run in, pinging
-        # whichever role the event type's ping selection resolved to.
-        main_role_id = self.primary_role_id or EVENT_PING_ROLE_ID
-        main_content = f"<@&{main_role_id}>" if main_role_id else None
+        # whichever role the event type's ping selection resolved to (falling back to
+        # every role in EVENT_PING_ROLE_ID if the event type has no ping configured).
+        if self.primary_role_id:
+            main_content = f"<@&{self.primary_role_id}>"
+        elif EVENT_PING_ROLE_IDS:
+            main_content = " ".join(f"<@&{r}>" for r in EVENT_PING_ROLE_IDS)
+        else:
+            main_content = None
 
         try:
             main_message = await self.origin_channel.send(
@@ -955,10 +983,7 @@ async def _handle_admin_request_reaction(payload: discord.RawReactionActionEvent
     emoji_str = str(payload.emoji)
 
     if emoji_str == "❌":
-        is_approver = (
-            (ADMIN_REQUEST_APPROVER_ROLE_1 and int(ADMIN_REQUEST_APPROVER_ROLE_1) in member_role_ids)
-            or (ADMIN_REQUEST_APPROVER_ROLE_2 and int(ADMIN_REQUEST_APPROVER_ROLE_2) in member_role_ids)
-        )
+        is_approver = bool((ADMIN_REQUEST_APPROVER_ROLE_1_IDS | ADMIN_REQUEST_APPROVER_ROLE_2_IDS) & member_role_ids)
         if not is_approver:
             return
         db.deny_admin_request(message_id)
@@ -972,10 +997,10 @@ async def _handle_admin_request_reaction(payload: discord.RawReactionActionEvent
     if emoji_str == "✅":
         new_role1, new_role2 = bool(role1_approved), bool(role2_approved)
         changed = False
-        if ADMIN_REQUEST_APPROVER_ROLE_1 and int(ADMIN_REQUEST_APPROVER_ROLE_1) in member_role_ids and not new_role1:
+        if ADMIN_REQUEST_APPROVER_ROLE_1_IDS & member_role_ids and not new_role1:
             new_role1 = True
             changed = True
-        if ADMIN_REQUEST_APPROVER_ROLE_2 and int(ADMIN_REQUEST_APPROVER_ROLE_2) in member_role_ids and not new_role2:
+        if ADMIN_REQUEST_APPROVER_ROLE_2_IDS & member_role_ids and not new_role2:
             new_role2 = True
             changed = True
         if changed:
@@ -991,13 +1016,14 @@ async def _handle_admin_request_reaction(payload: discord.RawReactionActionEvent
 
             expires_dt = datetime.datetime.now(datetime.timezone.utc) + datetime.timedelta(seconds=duration_seconds)
 
-            if requester is not None and ADMIN_REQUEST_GRANT_ROLE_ID:
-                role = guild.get_role(int(ADMIN_REQUEST_GRANT_ROLE_ID))
-                if role is not None:
+            if requester is not None and ADMIN_REQUEST_GRANT_ROLE_IDS:
+                roles_to_add = [guild.get_role(rid) for rid in ADMIN_REQUEST_GRANT_ROLE_IDS]
+                roles_to_add = [r for r in roles_to_add if r is not None]
+                if roles_to_add:
                     try:
-                        await requester.add_roles(role, reason="Approved temporary admin request")
+                        await requester.add_roles(*roles_to_add, reason="Approved temporary admin request")
                     except discord.Forbidden:
-                        print(f"ADMIN_REQUEST: missing permission to grant role to {requester_id}")
+                        print(f"ADMIN_REQUEST: missing permission to grant role(s) to {requester_id}")
 
             db.approve_admin_request(message_id, expires_dt.isoformat())
 
@@ -1141,9 +1167,10 @@ async def _run_monthly_check(month_key: str, prev_start: datetime.datetime, prev
     for member in guild.members:
         if member.bot:
             continue
-        if MONTHLY_CHECK_ROLE_ID and not any(str(r.id) == MONTHLY_CHECK_ROLE_ID for r in member.roles):
+        member_role_ids = {r.id for r in member.roles}
+        if MONTHLY_CHECK_ROLE_IDS and not (MONTHLY_CHECK_ROLE_IDS & member_role_ids):
             continue
-        if MONTHLY_CHECK_EXEMPT_ROLE_ID and any(str(r.id) == MONTHLY_CHECK_EXEMPT_ROLE_ID for r in member.roles):
+        if MONTHLY_CHECK_EXEMPT_ROLE_IDS and (MONTHLY_CHECK_EXEMPT_ROLE_IDS & member_role_ids):
             continue
         earned = db.get_vp_earned_in_range(member.id, prev_start.isoformat(), prev_end.isoformat())
         if earned < MIN_MONTHLY_VP:
@@ -1153,7 +1180,7 @@ async def _run_monthly_check(month_key: str, prev_start: datetime.datetime, prev
         await channel.send(f"Monthly VP check for **{prev_start.strftime('%B %Y')}**: everyone met the {MIN_MONTHLY_VP} VP minimum. 🎉")
         return
 
-    role_mention = f"<@&{MONTHLY_ALERT_ROLE_ID}>" if MONTHLY_ALERT_ROLE_ID else ""
+    role_mention = " ".join(f"<@&{r}>" for r in MONTHLY_ALERT_ROLE_IDS)
     lines = [f"{member.mention} — {earned} VP" for member, earned in low_vp]
     embed = discord.Embed(
         title=f"Monthly VP Check — {prev_start.strftime('%B %Y')}",
