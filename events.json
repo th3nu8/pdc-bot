@@ -11,7 +11,7 @@
   },
   {
    "name": "Platoon Deployment",
-   "clearance": 2,
+   "clearance": 1,
    "pings": [
       {
         "name": "Monarch",
