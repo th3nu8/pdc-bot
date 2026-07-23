@@ -75,6 +75,20 @@ def init_db():
         expires_at TEXT,
         created_at TEXT
     )""")
+    c.execute("""CREATE TABLE IF NOT EXISTS squad_signups (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        message_id INTEGER NOT NULL,
+        squad TEXT NOT NULL,
+        role_type TEXT NOT NULL,
+        user_id INTEGER NOT NULL,
+        username TEXT,
+        joined_at TEXT,
+        UNIQUE(message_id, user_id)
+    )""")
+    c.execute(
+        "CREATE UNIQUE INDEX IF NOT EXISTS idx_squad_lead_unique ON squad_signups(message_id, squad) "
+        "WHERE role_type='lead'"
+    )
     conn.commit()
     conn.close()
 
@@ -432,3 +446,48 @@ def mark_admin_request_expired(message_id):
     c.execute("UPDATE admin_requests SET status='expired' WHERE message_id=?", (message_id,))
     conn.commit()
     conn.close()
+
+
+def set_squad_signup(message_id, squad, role_type, user_id, username):
+    """Reserves a spot for user_id in the given squad/role on this event, replacing any prior
+    slot they held on the same event. Returns True on success, False if role_type is 'lead' and
+    that squad already has a different lead."""
+    conn = get_conn()
+    c = conn.cursor()
+    c.execute("DELETE FROM squad_signups WHERE message_id=? AND user_id=?", (message_id, user_id))
+    if role_type == "lead":
+        c.execute(
+            "SELECT user_id FROM squad_signups WHERE message_id=? AND squad=? AND role_type='lead'",
+            (message_id, squad),
+        )
+        if c.fetchone():
+            conn.close()
+            return False
+    c.execute(
+        "INSERT INTO squad_signups (message_id, squad, role_type, user_id, username, joined_at) "
+        "VALUES (?, ?, ?, ?, ?, ?)",
+        (message_id, squad, role_type, user_id, username, datetime.now(timezone.utc).isoformat()),
+    )
+    conn.commit()
+    conn.close()
+    return True
+
+
+def remove_squad_signup(message_id, user_id):
+    conn = get_conn()
+    c = conn.cursor()
+    c.execute("DELETE FROM squad_signups WHERE message_id=? AND user_id=?", (message_id, user_id))
+    changed = c.rowcount > 0
+    conn.commit()
+    conn.close()
+    return changed
+
+
+def get_squad_roster(message_id):
+    """Returns list of (squad, role_type, user_id) rows for this event."""
+    conn = get_conn()
+    c = conn.cursor()
+    c.execute("SELECT squad, role_type, user_id FROM squad_signups WHERE message_id=?", (message_id,))
+    rows = c.fetchall()
+    conn.close()
+    return rows
