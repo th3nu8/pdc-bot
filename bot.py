@@ -854,6 +854,13 @@ def _squad_field_name(squad: str) -> str:
     return f"{SQUAD_EMOJI[squad]} {squad} Squad"
 
 
+def _active_squads_from_embed(embed: discord.Embed) -> list:
+    """Reads which squads this specific event actually has, based on the squad fields
+    already present in its embed — the source of truth for a per-message subset."""
+    field_names = {f.name for f in embed.fields}
+    return [s for s in SQUADS if _squad_field_name(s) in field_names]
+
+
 def _rebuild_squad_fields(embed: discord.Embed, message_id: int, active_squads: list):
     """Removes any existing squad fields from the embed and re-adds fresh ones built from
     the current roster in the database, leaving all other fields untouched."""
@@ -916,7 +923,7 @@ class SquadButton(discord.ui.Button):
             return
 
         embed = interaction.message.embeds[0] if interaction.message.embeds else discord.Embed()
-        _rebuild_squad_fields(embed, interaction.message.id, SQUADS)
+        _rebuild_squad_fields(embed, interaction.message.id, _active_squads_from_embed(embed))
         await interaction.response.edit_message(embed=embed)
 
 
@@ -931,18 +938,22 @@ class LeaveSquadButton(discord.ui.Button):
             return
 
         embed = interaction.message.embeds[0] if interaction.message.embeds else discord.Embed()
-        _rebuild_squad_fields(embed, interaction.message.id, SQUADS)
+        _rebuild_squad_fields(embed, interaction.message.id, _active_squads_from_embed(embed))
         await interaction.response.edit_message(embed=embed)
 
 
 class SquadSignupView(discord.ui.View):
-    """Persistent view (timeout=None, static custom_ids) so squad buttons keep working across bot restarts."""
+    """Persistent view (timeout=None, static custom_ids) so squad buttons keep working across bot restarts.
+    active_squads controls which squads actually get buttons on THIS message; the custom_ids are the same
+    fixed strings regardless, so a single global registration (with all squads) covers routing for every
+    message no matter which subset of squads it was sent with."""
 
-    def __init__(self):
+    def __init__(self, active_squads: list = None):
         super().__init__(timeout=None)
-        for squad in SQUADS:
+        squads = active_squads if active_squads is not None else SQUADS
+        for squad in squads:
             self.add_item(SquadButton(squad, "lead"))
-        for squad in SQUADS:
+        for squad in squads:
             self.add_item(SquadButton(squad, "member"))
         self.add_item(LeaveSquadButton())
 
@@ -1052,7 +1063,7 @@ class EventTimeModal(discord.ui.Modal):
         # or the EVENT_PING_ROLE_ID fallback — all already resolved before this modal
         # was created).
         main_content = self.ping_content
-        view = SquadSignupView() if self.active_squads else discord.utils.MISSING
+        view = SquadSignupView(self.active_squads) if self.active_squads else discord.utils.MISSING
 
         try:
             main_message = await self.origin_channel.send(
