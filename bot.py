@@ -66,6 +66,9 @@ ADMIN_REQUEST_CHANNEL_ID = os.getenv("ADMIN_REQUEST_CHANNEL_ID")  # where reques
 ADMIN_REQUEST_GRANT_ROLE_ID = os.getenv("ADMIN_REQUEST_GRANT_ROLE_ID")  # role(s) granted on approval (comma-separated for multiple)
 ADMIN_REQUEST_GRANT_ROLE_IDS = _parse_role_ids(ADMIN_REQUEST_GRANT_ROLE_ID)
 
+SQUAD_LEAD_ROLE_ID = os.getenv("SQUAD_LEAD_ROLE_ID")  # role(s) allowed to claim a Squad Lead slot on /event (comma-separated for multiple)
+SQUAD_LEAD_ROLE_IDS = _parse_role_ids(SQUAD_LEAD_ROLE_ID)
+
 intents = discord.Intents.default()
 intents.members = True  # needed to resolve member display names
 
@@ -118,6 +121,9 @@ async def on_ready():
         site_monitor_loop.start()
     if not admin_request_expiry_loop.is_running():
         admin_request_expiry_loop.start()
+    if not getattr(bot, "_squad_view_registered", False):
+        bot.add_view(SquadSignupView())
+        bot._squad_view_registered = True
     print(f"Logged in as {bot.user} | synced {len(synced)} commands")
 
 
@@ -771,6 +777,21 @@ async def detachment_autocomplete(interaction: discord.Interaction, current: str
     return choices
 
 
+async def squads_autocomplete(interaction: discord.Interaction, current: str):
+    """Supports 'All' plus comma-separated multi-squad input — only autocompletes the segment being typed."""
+    parts = [p.strip() for p in current.split(",")]
+    prefix = ", ".join(parts[:-1])
+    last = parts[-1].lower()
+    already_chosen = {p.lower() for p in parts[:-1]}
+    options = ["All"] + SQUADS
+    matches = [n for n in options if last in n.lower() and n.lower() not in already_chosen]
+    choices = []
+    for n in matches[:25]:
+        value = n if n == "All" or not prefix else f"{prefix}, {n}"
+        choices.append(app_commands.Choice(name=value, value=value))
+    return choices
+
+
 async def ping_autocomplete(interaction: discord.Interaction, current: str):
     event_type = interaction.namespace.event_type
     names = []
@@ -813,6 +834,119 @@ def _resolve_event_ping(pings: list, ping: str):
     return None, False, f"This event type has multiple ping options — specify `ping`. Choices: {options}, Everyone, None", False
 
 
+SQUADS = ["Red", "Blue", "Green", "Gold"]
+SQUAD_EMOJI = {"Red": "🔴", "Blue": "🔵", "Green": "🟢", "Gold": "🟡"}
+SQUAD_MEMBER_STYLE = {
+    "Red": discord.ButtonStyle.danger,
+    "Blue": discord.ButtonStyle.primary,
+    "Green": discord.ButtonStyle.success,
+    "Gold": discord.ButtonStyle.secondary,
+}
+
+
+def _has_squad_lead_permission(member: discord.Member) -> bool:
+    if not SQUAD_LEAD_ROLE_IDS:
+        return False
+    return bool(SQUAD_LEAD_ROLE_IDS & {r.id for r in member.roles})
+
+
+def _squad_field_name(squad: str) -> str:
+    return f"{SQUAD_EMOJI[squad]} {squad} Squad"
+
+
+def _rebuild_squad_fields(embed: discord.Embed, message_id: int, active_squads: list):
+    """Removes any existing squad fields from the embed and re-adds fresh ones built from
+    the current roster in the database, leaving all other fields untouched."""
+    squad_field_names = {_squad_field_name(s) for s in SQUADS}
+    kept = [(f.name, f.value, f.inline) for f in embed.fields if f.name not in squad_field_names]
+    embed.clear_fields()
+    for name, value, inline in kept:
+        embed.add_field(name=name, value=value, inline=inline)
+
+    roster = db.get_squad_roster(message_id)
+    data = {s: {"lead": None, "members": []} for s in active_squads}
+    for squad, role_type, user_id in roster:
+        if squad not in data:
+            continue
+        if role_type == "lead":
+            data[squad]["lead"] = user_id
+        else:
+            data[squad]["members"].append(user_id)
+
+    for squad in active_squads:
+        lead = data[squad]["lead"]
+        members = data[squad]["members"]
+        lead_text = f"<@{lead}>" if lead else "*Open*"
+        members_text = "\n".join(f"<@{m}>" for m in members) if members else "*None yet*"
+        embed.add_field(
+            name=_squad_field_name(squad),
+            value=f"**Lead:** {lead_text}\n**Members:**\n{members_text}",
+            inline=True,
+        )
+    return embed
+
+
+class SquadButton(discord.ui.Button):
+    def __init__(self, squad: str, role_type: str):
+        self.squad = squad
+        self.role_type = role_type
+        if role_type == "lead":
+            label = f"👑 {squad} Lead"
+            style = discord.ButtonStyle.secondary
+            row = 0
+        else:
+            label = f"{squad} Squad"
+            style = SQUAD_MEMBER_STYLE[squad]
+            row = 1
+        super().__init__(label=label, style=style, custom_id=f"squadsignup:{squad}:{role_type}", row=row)
+
+    async def callback(self, interaction: discord.Interaction):
+        if self.role_type == "lead" and not _has_squad_lead_permission(interaction.user):
+            await interaction.response.send_message(
+                "You don't have a high enough rank to be a squad lead.", ephemeral=True
+            )
+            return
+
+        ok = db.set_squad_signup(interaction.message.id, self.squad, self.role_type, interaction.user.id, str(interaction.user))
+        if not ok:
+            await interaction.response.send_message(
+                f"{self.squad} squad already has a lead. Try a different squad, or ask an existing lead to leave first.",
+                ephemeral=True,
+            )
+            return
+
+        embed = interaction.message.embeds[0] if interaction.message.embeds else discord.Embed()
+        _rebuild_squad_fields(embed, interaction.message.id, SQUADS)
+        await interaction.response.edit_message(embed=embed)
+
+
+class LeaveSquadButton(discord.ui.Button):
+    def __init__(self):
+        super().__init__(label="Leave My Slot", style=discord.ButtonStyle.secondary, custom_id="squadsignup:leave", row=2)
+
+    async def callback(self, interaction: discord.Interaction):
+        changed = db.remove_squad_signup(interaction.message.id, interaction.user.id)
+        if not changed:
+            await interaction.response.send_message("You don't currently have a squad slot on this event.", ephemeral=True)
+            return
+
+        embed = interaction.message.embeds[0] if interaction.message.embeds else discord.Embed()
+        _rebuild_squad_fields(embed, interaction.message.id, SQUADS)
+        await interaction.response.edit_message(embed=embed)
+
+
+class SquadSignupView(discord.ui.View):
+    """Persistent view (timeout=None, static custom_ids) so squad buttons keep working across bot restarts."""
+
+    def __init__(self):
+        super().__init__(timeout=None)
+        for squad in SQUADS:
+            self.add_item(SquadButton(squad, "lead"))
+        for squad in SQUADS:
+            self.add_item(SquadButton(squad, "member"))
+        self.add_item(LeaveSquadButton())
+
+
 class EventTimeModal(discord.ui.Modal):
     """Private form (only visible to the person running /event) for picking the event's date/time/timezone."""
 
@@ -840,6 +974,7 @@ class EventTimeModal(discord.ui.Modal):
         ping_content: str = None,
         ping_everyone: bool = False,
         detachments: list = None,
+        active_squads: list = None,
     ):
         super().__init__(title=f"Schedule: {entry['name'][:30]}")
         self.entry = entry
@@ -849,6 +984,7 @@ class EventTimeModal(discord.ui.Modal):
         self.ping_content = ping_content
         self.ping_everyone = ping_everyone
         self.detachments = detachments or []
+        self.active_squads = active_squads or []
 
         self.date_input = discord.ui.TextInput(
             label="Date (MM/DD/YYYY)", placeholder="07/15/2026", required=True, max_length=10
@@ -902,6 +1038,13 @@ class EventTimeModal(discord.ui.Modal):
         if self.details:
             embed.add_field(name="Details", value=self.details, inline=False)
         embed.add_field(name="RSVP", value="✅ Attending  🟨 Maybe  ❌ Not Attending", inline=False)
+        if self.active_squads:
+            for squad in self.active_squads:
+                embed.add_field(
+                    name=_squad_field_name(squad),
+                    value="**Lead:** *Open*\n**Members:**\n*None yet*",
+                    inline=True,
+                )
         embed.set_footer(text=f"Hosted by {self.host.display_name}")
 
         # The main event card always posts in the channel /event was run in, pinging
@@ -909,11 +1052,13 @@ class EventTimeModal(discord.ui.Modal):
         # or the EVENT_PING_ROLE_ID fallback — all already resolved before this modal
         # was created).
         main_content = self.ping_content
+        view = SquadSignupView() if self.active_squads else discord.utils.MISSING
 
         try:
             main_message = await self.origin_channel.send(
                 content=main_content,
                 embed=embed,
+                view=view,
                 allowed_mentions=discord.AllowedMentions(roles=True, users=False, everyone=self.ping_everyone),
             )
         except discord.Forbidden:
@@ -1109,9 +1254,10 @@ async def on_raw_reaction_add(payload: discord.RawReactionActionEvent):
     details="Optional extra details about the event",
     ping="Which group to ping (a configured option, 'Everyone' for @everyone, or 'None' for no ping)",
     detachments="Also ping and post to one or more detachments' channels — comma-separated (optional, see detachments.json)",
+    squads="Add squad sign-up buttons: 'All' for Red/Blue/Green/Gold, or a comma-separated subset (optional)",
 )
-@app_commands.autocomplete(event_type=event_type_autocomplete, ping=ping_autocomplete, detachments=detachment_autocomplete)
-async def event(interaction: discord.Interaction, event_type: str, details: str = None, ping: str = None, detachments: str = None):
+@app_commands.autocomplete(event_type=event_type_autocomplete, ping=ping_autocomplete, detachments=detachment_autocomplete, squads=squads_autocomplete)
+async def event(interaction: discord.Interaction, event_type: str, details: str = None, ping: str = None, detachments: str = None, squads: str = None):
     entry = events_config.find_event(event_type)
     if not entry:
         await interaction.response.send_message(
@@ -1152,10 +1298,31 @@ async def event(interaction: discord.Interaction, event_type: str, details: str 
             )
             return
 
+    active_squads = []
+    if squads:
+        normalized = squads.strip().lower()
+        if normalized == "all":
+            active_squads = list(SQUADS)
+        else:
+            requested = [s.strip() for s in squads.split(",") if s.strip()]
+            unknown_squads = []
+            for name in requested:
+                match = next((s for s in SQUADS if s.lower() == name.lower()), None)
+                if match and match not in active_squads:
+                    active_squads.append(match)
+                elif not match:
+                    unknown_squads.append(name)
+            if unknown_squads:
+                await interaction.response.send_message(
+                    f"Unknown squad(s): {', '.join(unknown_squads)}. Valid squads: {', '.join(SQUADS)}, or 'All'.",
+                    ephemeral=True,
+                )
+                return
+
     await interaction.response.send_modal(
         EventTimeModal(
             entry, details, interaction.user, interaction.channel,
-            ping_content, ping_everyone, detachment_entries,
+            ping_content, ping_everyone, detachment_entries, active_squads,
         )
     )
 
