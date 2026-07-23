@@ -773,14 +773,44 @@ async def detachment_autocomplete(interaction: discord.Interaction, current: str
 
 async def ping_autocomplete(interaction: discord.Interaction, current: str):
     event_type = interaction.namespace.event_type
-    if not event_type:
-        return []
-    entry = events_config.find_event(event_type)
-    if not entry:
-        return []
-    names = [p.get("name", "") for p in entry.get("pings", []) if p.get("name")]
+    names = []
+    if event_type:
+        entry = events_config.find_event(event_type)
+        if entry:
+            names = [p.get("name", "") for p in entry.get("pings", []) if p.get("name")]
+    names = names + ["Everyone", "None"]
     matches = [n for n in names if current.lower() in n.lower()]
     return [app_commands.Choice(name=n, value=n) for n in matches[:25]]
+
+
+def _resolve_event_ping(pings: list, ping: str):
+    """Returns (content, use_everyone_mention, error_message, should_use_global_fallback).
+    should_use_global_fallback is True only when the event type has zero pings configured
+    and the user didn't specify one — the only case where EVENT_PING_ROLE_ID should apply."""
+    if ping:
+        normalized = ping.strip().lower().lstrip("@")
+        if normalized == "everyone":
+            return "@everyone", True, None, False
+        if normalized in ("none", "nobody", "no one", "no ping"):
+            return None, False, None, False
+        match = next((p for p in pings if p.get("name", "").strip().lower() == ping.strip().lower()), None)
+        if not match:
+            return None, False, f"Unknown ping option '{ping}' for this event type.", False
+        role_id = match.get("role_id")
+        if not role_id or role_id == "PUT_ROLE_ID_HERE":
+            return None, False, None, False
+        return f"<@&{role_id}>", False, None, False
+
+    if len(pings) == 1:
+        role_id = pings[0].get("role_id")
+        if not role_id or role_id == "PUT_ROLE_ID_HERE":
+            return None, False, None, False
+        return f"<@&{role_id}>", False, None, False
+    if len(pings) == 0:
+        return None, False, None, True
+
+    options = ", ".join(p.get("name", "") for p in pings if p.get("name"))
+    return None, False, f"This event type has multiple ping options — specify `ping`. Choices: {options}, Everyone, None", False
 
 
 class EventTimeModal(discord.ui.Modal):
@@ -807,7 +837,8 @@ class EventTimeModal(discord.ui.Modal):
         details: str,
         host: discord.Member,
         origin_channel: discord.abc.Messageable,
-        primary_role_id: str = None,
+        ping_content: str = None,
+        ping_everyone: bool = False,
         detachments: list = None,
     ):
         super().__init__(title=f"Schedule: {entry['name'][:30]}")
@@ -815,7 +846,8 @@ class EventTimeModal(discord.ui.Modal):
         self.details = details
         self.host = host
         self.origin_channel = origin_channel
-        self.primary_role_id = primary_role_id
+        self.ping_content = ping_content
+        self.ping_everyone = ping_everyone
         self.detachments = detachments or []
 
         self.date_input = discord.ui.TextInput(
@@ -873,20 +905,16 @@ class EventTimeModal(discord.ui.Modal):
         embed.set_footer(text=f"Hosted by {self.host.display_name}")
 
         # The main event card always posts in the channel /event was run in, pinging
-        # whichever role the event type's ping selection resolved to (falling back to
-        # every role in EVENT_PING_ROLE_ID if the event type has no ping configured).
-        if self.primary_role_id:
-            main_content = f"<@&{self.primary_role_id}>"
-        elif EVENT_PING_ROLE_IDS:
-            main_content = " ".join(f"<@&{r}>" for r in EVENT_PING_ROLE_IDS)
-        else:
-            main_content = None
+        # whichever the ping selection resolved to (a specific role, @everyone, nobody,
+        # or the EVENT_PING_ROLE_ID fallback — all already resolved before this modal
+        # was created).
+        main_content = self.ping_content
 
         try:
             main_message = await self.origin_channel.send(
                 content=main_content,
                 embed=embed,
-                allowed_mentions=discord.AllowedMentions(roles=True, users=False, everyone=False),
+                allowed_mentions=discord.AllowedMentions(roles=True, users=False, everyone=self.ping_everyone),
             )
         except discord.Forbidden:
             await interaction.response.send_message(
@@ -1079,7 +1107,7 @@ async def on_raw_reaction_add(payload: discord.RawReactionActionEvent):
 @app_commands.describe(
     event_type="Type of event (see events.json)",
     details="Optional extra details about the event",
-    ping="Which group to ping for this event (only needed if the event type has more than one option)",
+    ping="Which group to ping (a configured option, 'Everyone' for @everyone, or 'None' for no ping)",
     detachments="Also ping and post to one or more detachments' channels — comma-separated (optional, see detachments.json)",
 )
 @app_commands.autocomplete(event_type=event_type_autocomplete, ping=ping_autocomplete, detachments=detachment_autocomplete)
@@ -1100,27 +1128,12 @@ async def event(interaction: discord.Interaction, event_type: str, details: str 
         return
 
     pings = entry.get("pings", [])
-    primary_role_id = None
-    if len(pings) == 1:
-        primary_role_id = pings[0].get("role_id")
-    elif len(pings) > 1:
-        if not ping:
-            options = ", ".join(p.get("name", "") for p in pings if p.get("name"))
-            await interaction.response.send_message(
-                f"This event type has multiple ping options — specify `ping`. Choices: {options}",
-                ephemeral=True,
-            )
-            return
-        match = next((p for p in pings if p.get("name", "").strip().lower() == ping.strip().lower()), None)
-        if not match:
-            await interaction.response.send_message(
-                f"Unknown ping option '{ping}' for this event type.", ephemeral=True
-            )
-            return
-        primary_role_id = match.get("role_id")
-
-    if primary_role_id == "PUT_ROLE_ID_HERE":
-        primary_role_id = None
+    ping_content, ping_everyone, ping_error, should_use_global_fallback = _resolve_event_ping(pings, ping)
+    if ping_error:
+        await interaction.response.send_message(ping_error, ephemeral=True)
+        return
+    if should_use_global_fallback and EVENT_PING_ROLE_IDS:
+        ping_content = " ".join(f"<@&{r}>" for r in EVENT_PING_ROLE_IDS)
 
     detachment_entries = []
     if detachments:
@@ -1140,7 +1153,10 @@ async def event(interaction: discord.Interaction, event_type: str, details: str 
             return
 
     await interaction.response.send_modal(
-        EventTimeModal(entry, details, interaction.user, interaction.channel, primary_role_id, detachment_entries)
+        EventTimeModal(
+            entry, details, interaction.user, interaction.channel,
+            ping_content, ping_everyone, detachment_entries,
+        )
     )
 
 
