@@ -1,56 +1,80 @@
 [
   {
-    "name": "Medal of Reverence",
-    "role_id": "1512889842961481878",
+    "name": "Distinguished Service Medal",
+    "role_id": "1527115592996225105",
     "repeatable": false,
-    "vp": 1000
+    "vp": 0
   },
   {
-    "name": "Medal of Service",
-    "role_id": "1512890312752889977",
-    "repeatable": true,
-    "vp": 25
-  },
-  {
-    "name": "Medal of Duty",
-    "role_id": "1512943485425287220",
-    "repeatable": true,
-    "vp": 10
-  },
-  {
-    "name": "Medal of Leadership",
-    "role_id": "1512890568680800386",
-    "repeatable": true,
-    "vp": 10
-  },
-  {
-    "name": "Medal of Valor",
-    "role_id": "1512889567131336814",
-    "repeatable": true,
-    "vp": 10
-  },
-  {
-    "name": "Medal of Commitment",
-    "role_id": "1512890090001666098",
+    "name": "Medal Of Valor",
+    "role_id": "1527115443867750410",
     "repeatable": false,
-    "vp": 5
+    "vp": 0
   },
   {
-    "name": "Exemplary Conduct Medal",
-    "role_id": "1512889377678692482",
-    "repeatable": false,
-    "vp": 5
-  },
-  {
-    "name": "Red Bull Sponser",
-    "role_id": "1512858977564623011",
+    "name": "Black Star",
+    "role_id": "1527116273174057062",
     "repeatable": true,
-    "vp": 3
+    "vp": 0
   },
   {
-    "name": "Distinguished Marksman Medal",
-    "role_id": "1523878421476806696",
+    "name": "Silver Star",
+    "role_id": "1527117626516705371",
     "repeatable": true,
-    "vp": 3
+    "vp": 0
+  },
+  {
+    "name": "Bronze Star",
+    "role_id": "1527117187725262878",
+    "repeatable": true,
+    "vp": 0
+  },
+  {
+    "name": "General Of The Month",
+    "role_id": "1527115362762756219",
+    "repeatable": true,
+    "vp": 0
+  },
+  {
+    "name": "Officer Of The Month",
+    "role_id": "1527115748961685616",
+    "repeatable": true,
+    "vp": 0
+  },
+  {
+    "name": "SQL Of The Month",
+    "role_id": "1527116495887400990",
+    "repeatable": true,
+    "vp": 0
+  },
+  {
+    "name": "Admin Officer Of The Month",
+    "role_id": "1527315504719728762",
+    "repeatable": true,
+    "vp": 0
+  },
+  {
+    "name": "Progression Officer Of The Month",
+    "role_id": "1527315638861959448",
+    "repeatable": true,
+    "vp": 0
+  },
+  {
+    "name": "Justice Officer Of The Month",
+    "role_id": "1527315816268169237",
+    "repeatable": true,
+    "vp": 0
+  },
+  {
+    "name": "Operations Officer Of The Month",
+    "role_id": "1527315902859579412",
+    "repeatable": true,
+    "vp": 0
+  },
+  {
+    "name": "Training Officer Of The Month",
+    "role_id": "1527316005376884766",
+    "repeatable": true,
+    "vp": 0
   }
 ]
