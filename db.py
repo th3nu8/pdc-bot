@@ -62,6 +62,10 @@ def init_db():
         c.execute("ALTER TABLE event_messages ADD COLUMN detachment_name TEXT")
     except sqlite3.OperationalError:
         pass  # column already exists from a previous run
+    try:
+        c.execute("ALTER TABLE event_messages ADD COLUMN required_role_ids TEXT")
+    except sqlite3.OperationalError:
+        pass  # column already exists from a previous run
     c.execute("""CREATE TABLE IF NOT EXISTS admin_requests (
         message_id INTEGER PRIMARY KEY,
         requester_id INTEGER,
@@ -344,24 +348,25 @@ def set_site_status(name, is_up):
     conn.close()
 
 
-def create_event_message(message_id, origin_channel_id, event_name, detachment_name=None):
+def create_event_message(message_id, origin_channel_id, event_name, detachment_name=None, required_role_ids=None):
     conn = get_conn()
     c = conn.cursor()
     c.execute(
-        "INSERT OR REPLACE INTO event_messages (message_id, origin_channel_id, event_name, detachment_name) "
-        "VALUES (?, ?, ?, ?)",
-        (message_id, origin_channel_id, event_name, detachment_name),
+        "INSERT OR REPLACE INTO event_messages (message_id, origin_channel_id, event_name, detachment_name, required_role_ids) "
+        "VALUES (?, ?, ?, ?, ?)",
+        (message_id, origin_channel_id, event_name, detachment_name, required_role_ids),
     )
     conn.commit()
     conn.close()
 
 
 def get_event_message(message_id):
-    """Returns (origin_channel_id, event_name, detachment_name) for a tracked event message, or None."""
+    """Returns (origin_channel_id, event_name, detachment_name, required_role_ids) for a tracked event
+    message, or None. required_role_ids is a comma-separated string of role IDs, or None if unrestricted."""
     conn = get_conn()
     c = conn.cursor()
     c.execute(
-        "SELECT origin_channel_id, event_name, detachment_name FROM event_messages WHERE message_id=?",
+        "SELECT origin_channel_id, event_name, detachment_name, required_role_ids FROM event_messages WHERE message_id=?",
         (message_id,),
     )
     row = c.fetchone()
