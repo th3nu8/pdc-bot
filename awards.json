@@ -15,19 +15,19 @@
     "name": "Black Star",
     "role_id": "1527116273174057062",
     "repeatable": true,
-    "vp": 0
+    "vp": 15
   },
   {
     "name": "Silver Star",
     "role_id": "1527117626516705371",
     "repeatable": true,
-    "vp": 0
+    "vp": 5
   },
   {
     "name": "Bronze Star",
     "role_id": "1527117187725262878",
     "repeatable": true,
-    "vp": 0
+    "vp": 3
   },
   {
     "name": "General Of The Month",
