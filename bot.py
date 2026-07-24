@@ -804,6 +804,14 @@ async def ping_autocomplete(interaction: discord.Interaction, current: str):
     return [app_commands.Choice(name=n, value=n) for n in matches[:25]]
 
 
+def _extract_role_ids_from_mentions(content: str):
+    """Pulls role IDs out of a string like '<@&123> <@&456>' into a comma-separated string, or None."""
+    if not content:
+        return None
+    ids = re.findall(r"<@&(\d+)>", content)
+    return ",".join(ids) if ids else None
+
+
 def _resolve_event_ping(pings: list, ping: str):
     """Returns (content, use_everyone_mention, error_message, should_use_global_fallback).
     should_use_global_fallback is True only when the event type has zero pings configured
@@ -1044,11 +1052,18 @@ class EventTimeModal(discord.ui.Modal):
         localized = naive_dt.replace(tzinfo=tz)
         ts = int(localized.timestamp())
 
+        main_required_role_ids = None if self.ping_everyone else _extract_role_ids_from_mentions(self.ping_content)
+        rsvp_note = (
+            "React ✅ Attending, 🟨 Maybe, or ❌ Not Attending — only members with the pinged role can react."
+            if main_required_role_ids
+            else "React ✅ Attending, 🟨 Maybe, or ❌ Not Attending."
+        )
+
         embed = discord.Embed(title=f"📅 {self.entry['name']}", color=discord.Color.blue())
         embed.add_field(name="When", value=f"<t:{ts}:t> on <t:{ts}:D> (<t:{ts}:R>)", inline=False)
         if self.details:
             embed.add_field(name="Details", value=self.details, inline=False)
-        embed.add_field(name="RSVP", value="✅ Attending  🟨 Maybe  ❌ Not Attending", inline=False)
+        embed.add_field(name="RSVP", value=rsvp_note, inline=False)
         if self.active_squads:
             for squad in self.active_squads:
                 embed.add_field(
@@ -1079,8 +1094,7 @@ class EventTimeModal(discord.ui.Modal):
             )
             return
 
-        for emoji in ("✅", "🟨", "❌"):
-            await main_message.add_reaction(emoji)
+        db.create_event_message(main_message.id, self.origin_channel.id, self.entry["name"], None, main_required_role_ids)
 
         # Each detachment picked gets its own short ping message in its own channel —
         # separate from the main event card. Reactions on them get relayed back here.
@@ -1112,9 +1126,7 @@ class EventTimeModal(discord.ui.Modal):
                     content=det_content,
                     allowed_mentions=discord.AllowedMentions(roles=True, users=False, everyone=False),
                 )
-                for emoji in ("✅", "🟨", "❌"):
-                    await det_message.add_reaction(emoji)
-                db.create_event_message(det_message.id, self.origin_channel.id, self.entry["name"], det_name)
+                db.create_event_message(det_message.id, self.origin_channel.id, self.entry["name"], det_name, det_role_id)
                 posted_to.append((det_name, det_channel))
             except discord.Forbidden:
                 failed.append(det_name)
@@ -1229,10 +1241,30 @@ async def on_raw_reaction_add(payload: discord.RawReactionActionEvent):
         return
     emoji_str = str(payload.emoji)
 
-    if emoji_str in EVENT_RSVP_LABELS:
-        record = db.get_event_message(payload.message_id)
-        if record is not None:
-            origin_channel_id, event_name, detachment_name = record
+    record = db.get_event_message(payload.message_id)
+    if record is not None:
+        origin_channel_id, event_name, detachment_name, required_role_ids = record
+
+        if required_role_ids:
+            required_ids = {int(r) for r in required_role_ids.split(",") if r.strip().isdigit()}
+            member = payload.member
+            has_role = bool(member and ({r.id for r in member.roles} & required_ids))
+            if required_ids and not has_role:
+                reaction_channel = bot.get_channel(payload.channel_id)
+                if reaction_channel is None:
+                    try:
+                        reaction_channel = await bot.fetch_channel(payload.channel_id)
+                    except discord.HTTPException:
+                        reaction_channel = None
+                if reaction_channel is not None:
+                    try:
+                        msg = await reaction_channel.fetch_message(payload.message_id)
+                        await msg.remove_reaction(payload.emoji, discord.Object(id=payload.user_id))
+                    except (discord.Forbidden, discord.HTTPException):
+                        print(f"EVENT_RSVP: missing permission to remove unauthorized reaction in channel {payload.channel_id}")
+                return
+
+        if emoji_str in EVENT_RSVP_LABELS and detachment_name:
             origin_channel = bot.get_channel(origin_channel_id)
             if origin_channel is None:
                 try:
@@ -1242,15 +1274,12 @@ async def on_raw_reaction_add(payload: discord.RawReactionActionEvent):
             if origin_channel is not None:
                 display = payload.member.mention if payload.member else f"<@{payload.user_id}>"
                 status = EVENT_RSVP_LABELS[emoji_str]
-                if detachment_name:
-                    text = f"{display} reacted {status} to **{event_name}** as **{detachment_name}**."
-                else:
-                    text = f"{display} reacted {status} to **{event_name}**."
+                text = f"{display} reacted {status} to **{event_name}** as **{detachment_name}**."
                 try:
                     await origin_channel.send(text)
                 except discord.Forbidden:
                     print(f"EVENT_RSVP: missing permission to notify channel {origin_channel_id}")
-            return
+        return
 
     if emoji_str in ("✅", "❌"):
         admin_request = db.get_admin_request(payload.message_id)
