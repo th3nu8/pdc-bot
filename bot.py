@@ -13,6 +13,8 @@ import awards_config
 import events_config
 import monitor_config
 import detachments_config
+import roblox_config
+import roblox_api
 
 load_dotenv()
 
@@ -68,6 +70,10 @@ ADMIN_REQUEST_GRANT_ROLE_IDS = _parse_role_ids(ADMIN_REQUEST_GRANT_ROLE_ID)
 
 SQUAD_LEAD_ROLE_ID = os.getenv("SQUAD_LEAD_ROLE_ID")  # role(s) allowed to claim a Squad Lead slot on /event (comma-separated for multiple)
 SQUAD_LEAD_ROLE_IDS = _parse_role_ids(SQUAD_LEAD_ROLE_ID)
+
+ROBLOX_API_KEY = os.getenv("ROBLOX_API_KEY")  # Open Cloud API key with group:write scope for your group
+ROBLOX_GROUP_ID = os.getenv("ROBLOX_GROUP_ID")  # your Roblox group's numeric ID
+ROBLOX_SYNC_LOG_CHANNEL_ID = os.getenv("ROBLOX_SYNC_LOG_CHANNEL_ID")  # optional: channel that logs sync results
 
 intents = discord.Intents.default()
 intents.members = True  # needed to resolve member display names
@@ -1054,9 +1060,9 @@ class EventTimeModal(discord.ui.Modal):
 
         main_required_role_ids = None if self.ping_everyone else _extract_role_ids_from_mentions(self.ping_content)
         rsvp_note = (
-            ""
+            "React ✅ Attending, 🟨 Maybe, or ❌ Not Attending — only members with the pinged role can react."
             if main_required_role_ids
-            else ""
+            else "React ✅ Attending, 🟨 Maybe, or ❌ Not Attending."
         )
 
         embed = discord.Embed(title=f"📅 {self.entry['name']}", color=discord.Color.blue())
@@ -1554,6 +1560,126 @@ async def sitestatus(interaction: discord.Interaction):
         is_up = await _check_site(url) if url else False
         lines.append(f"{'✅' if is_up else '🔴'} **{name}** — {url}")
     await interaction.followup.send("\n".join(lines), ephemeral=True)
+
+
+async def _sync_member_to_roblox(member: discord.Member, admin_triggered: bool = False):
+    """Looks up member's linked Roblox account, computes their target rank from
+    roblox_ranks.json, and pushes it to Roblox via Open Cloud. Returns a human-readable
+    result string. Does nothing (returns a skip message) if not configured, not linked,
+    or they hold none of the mapped roles."""
+    if not ROBLOX_API_KEY or not ROBLOX_GROUP_ID:
+        return "Roblox sync is not configured (ROBLOX_API_KEY / ROBLOX_GROUP_ID missing)."
+
+    link = db.get_roblox_link(member.id)
+    if not link:
+        return f"{member.mention} isn't linked to a Roblox account (they need to run /linkroblox)."
+    roblox_user_id, roblox_username = link
+
+    target = roblox_config.best_rank_for_member(member)
+    if not target:
+        return f"{member.mention} doesn't hold any Discord role mapped in roblox_ranks.json — nothing to sync."
+
+    roleset_id = target.get("roblox_roleset_id")
+    rank_name = target.get("name", "Unknown")
+    if not roleset_id:
+        return f"'{rank_name}' has no roblox_roleset_id configured in roblox_ranks.json."
+
+    membership_id, status = await roblox_api.get_membership_id(ROBLOX_GROUP_ID, roblox_user_id, ROBLOX_API_KEY)
+    if not membership_id:
+        return f"Couldn't find {roblox_username} (ID {roblox_user_id}) in the Roblox group (HTTP {status}). Are they a member?"
+
+    success, status, text = await roblox_api.assign_role(ROBLOX_GROUP_ID, membership_id, roleset_id, ROBLOX_API_KEY)
+    if not success:
+        return f"Roblox API rejected the rank change for {roblox_username} (HTTP {status}): {text[:300]}"
+
+    db.mark_roblox_synced(member.id, rank_name)
+    return f"Synced {member.mention} ({roblox_username}) to Roblox rank **{rank_name}**."
+
+
+@bot.event
+async def on_member_update(before: discord.Member, after: discord.Member):
+    if not ROBLOX_API_KEY or not ROBLOX_GROUP_ID:
+        return
+    before_ids = {r.id for r in before.roles}
+    after_ids = {r.id for r in after.roles}
+    if before_ids == after_ids:
+        return
+    mapped = roblox_config.all_mapped_role_ids()
+    if not mapped:
+        return
+    if not ((before_ids ^ after_ids) & mapped):
+        return  # the roles that changed weren't any of the mapped ones — nothing to do
+
+    result = await _sync_member_to_roblox(after)
+
+    if ROBLOX_SYNC_LOG_CHANNEL_ID:
+        channel = bot.get_channel(int(ROBLOX_SYNC_LOG_CHANNEL_ID))
+        if channel is None:
+            try:
+                channel = await bot.fetch_channel(int(ROBLOX_SYNC_LOG_CHANNEL_ID))
+            except discord.HTTPException:
+                channel = None
+        if channel is not None:
+            try:
+                await channel.send(f"🔗 Roblox auto-sync: {result}")
+            except discord.Forbidden:
+                pass
+
+
+# ---------- /linkroblox ----------
+@bot.tree.command(name="linkroblox", description="Link your Discord account to your Roblox account")
+@app_commands.describe(roblox_username="Your exact Roblox username")
+async def linkroblox(interaction: discord.Interaction, roblox_username: str):
+    await interaction.response.defer(ephemeral=True)
+    roblox_user_id = await roblox_api.resolve_username_to_id(roblox_username)
+    if not roblox_user_id:
+        await interaction.followup.send(f"Couldn't find a Roblox user named '{roblox_username}'.", ephemeral=True)
+        return
+    db.set_roblox_link(interaction.user.id, roblox_user_id, roblox_username)
+    await interaction.followup.send(
+        f"Linked your Discord account to Roblox user **{roblox_username}** (ID {roblox_user_id}).", ephemeral=True
+    )
+
+
+# ---------- /setrobloxlink ----------
+@bot.tree.command(name="setrobloxlink", description="Manually link a Discord member to a Roblox account")
+@app_commands.describe(user="Discord member to link", roblox_username="Their exact Roblox username")
+@is_vp_admin()
+async def setrobloxlink(interaction: discord.Interaction, user: discord.Member, roblox_username: str):
+    await interaction.response.defer(ephemeral=True)
+    roblox_user_id = await roblox_api.resolve_username_to_id(roblox_username)
+    if not roblox_user_id:
+        await interaction.followup.send(f"Couldn't find a Roblox user named '{roblox_username}'.", ephemeral=True)
+        return
+    db.set_roblox_link(user.id, roblox_user_id, roblox_username)
+    await interaction.followup.send(
+        f"Linked {user.mention} to Roblox user **{roblox_username}** (ID {roblox_user_id}).", ephemeral=True
+    )
+
+
+# ---------- /robloxlink ----------
+@bot.tree.command(name="robloxlink", description="Check which Roblox account a member is linked to")
+@app_commands.describe(user="User to check (defaults to yourself)")
+async def robloxlink(interaction: discord.Interaction, user: discord.Member = None):
+    target = user or interaction.user
+    link = db.get_roblox_link(target.id)
+    if not link:
+        await interaction.response.send_message(f"{target.mention} isn't linked to a Roblox account.", ephemeral=True)
+        return
+    roblox_user_id, roblox_username = link
+    await interaction.response.send_message(
+        f"{target.mention} is linked to Roblox user **{roblox_username}** (ID {roblox_user_id}).", ephemeral=True
+    )
+
+
+# ---------- /syncroblox ----------
+@bot.tree.command(name="syncroblox", description="Manually sync a member's Roblox group rank to match their Discord roles right now")
+@app_commands.describe(user="User to sync")
+@is_vp_admin()
+async def syncroblox(interaction: discord.Interaction, user: discord.Member):
+    await interaction.response.defer(ephemeral=True)
+    result = await _sync_member_to_roblox(user, admin_triggered=True)
+    await interaction.followup.send(result, ephemeral=True)
 
 
 if __name__ == "__main__":
