@@ -8,16 +8,25 @@ before relying on this for real promotions/demotions. If it stops working, check
 https://create.roblox.com/docs/cloud/reference/features/groups for schema changes.
 """
 
+import socket
 import aiohttp
 
 USERNAME_LOOKUP_URL = "https://users.roblox.com/v1/usernames/users"
 CLOUD_BASE = "https://apis.roblox.com/cloud/v2"
 
 
+def _new_session():
+    """Forces IPv4. On some servers, broken/blackholed IPv6 routing causes connections to
+    hang until timeout instead of failing fast and falling back to IPv4 — this avoids that
+    entirely rather than relying on aiohttp's default happy-eyeballs behavior."""
+    connector = aiohttp.TCPConnector(family=socket.AF_INET)
+    return aiohttp.ClientSession(connector=connector)
+
+
 async def resolve_username_to_id(username: str):
     """Looks up a Roblox user ID from a username. Returns int or None if not found."""
     try:
-        async with aiohttp.ClientSession() as session:
+        async with _new_session() as session:
             async with session.post(
                 USERNAME_LOOKUP_URL,
                 json={"usernames": [username], "excludeBannedUsers": True},
@@ -45,7 +54,7 @@ async def get_membership_id(group_id: str, roblox_user_id: int, api_key: str):
     url = f"{CLOUD_BASE}/groups/{group_id}/memberships"
     params = {"filter": f"user == 'users/{roblox_user_id}'", "maxPageSize": 1}
     try:
-        async with aiohttp.ClientSession() as session:
+        async with _new_session() as session:
             async with session.get(
                 url, headers=headers, params=params, timeout=aiohttp.ClientTimeout(total=10)
             ) as resp:
@@ -73,7 +82,7 @@ async def assign_role(group_id: str, membership_id: str, roleset_id: int, api_ke
     url = f"{CLOUD_BASE}/groups/{group_id}/memberships/{membership_id}:assignRole"
     body = {"role": f"groups/{group_id}/roles/{roleset_id}"}
     try:
-        async with aiohttp.ClientSession() as session:
+        async with _new_session() as session:
             async with session.post(
                 url, headers=headers, json=body, timeout=aiohttp.ClientTimeout(total=10)
             ) as resp:
