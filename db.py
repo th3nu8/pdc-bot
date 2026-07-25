@@ -93,6 +93,14 @@ def init_db():
         "CREATE UNIQUE INDEX IF NOT EXISTS idx_squad_lead_unique ON squad_signups(message_id, squad) "
         "WHERE role_type='lead'"
     )
+    c.execute("""CREATE TABLE IF NOT EXISTS roblox_links (
+        discord_user_id INTEGER PRIMARY KEY,
+        roblox_user_id INTEGER NOT NULL,
+        roblox_username TEXT,
+        linked_at TEXT,
+        last_synced_rank TEXT,
+        last_synced_at TEXT
+    )""")
     conn.commit()
     conn.close()
 
@@ -496,3 +504,48 @@ def get_squad_roster(message_id):
     rows = c.fetchall()
     conn.close()
     return rows
+
+
+def set_roblox_link(discord_user_id, roblox_user_id, roblox_username):
+    conn = get_conn()
+    c = conn.cursor()
+    c.execute(
+        "INSERT INTO roblox_links (discord_user_id, roblox_user_id, roblox_username, linked_at) "
+        "VALUES (?, ?, ?, ?) "
+        "ON CONFLICT(discord_user_id) DO UPDATE SET roblox_user_id=excluded.roblox_user_id, "
+        "roblox_username=excluded.roblox_username, linked_at=excluded.linked_at",
+        (discord_user_id, roblox_user_id, roblox_username, datetime.now(timezone.utc).isoformat()),
+    )
+    conn.commit()
+    conn.close()
+
+
+def get_roblox_link(discord_user_id):
+    """Returns (roblox_user_id, roblox_username) or None."""
+    conn = get_conn()
+    c = conn.cursor()
+    c.execute("SELECT roblox_user_id, roblox_username FROM roblox_links WHERE discord_user_id=?", (discord_user_id,))
+    row = c.fetchone()
+    conn.close()
+    return row
+
+
+def remove_roblox_link(discord_user_id):
+    conn = get_conn()
+    c = conn.cursor()
+    c.execute("DELETE FROM roblox_links WHERE discord_user_id=?", (discord_user_id,))
+    changed = c.rowcount > 0
+    conn.commit()
+    conn.close()
+    return changed
+
+
+def mark_roblox_synced(discord_user_id, rank_name):
+    conn = get_conn()
+    c = conn.cursor()
+    c.execute(
+        "UPDATE roblox_links SET last_synced_rank=?, last_synced_at=? WHERE discord_user_id=?",
+        (rank_name, datetime.now(timezone.utc).isoformat(), discord_user_id),
+    )
+    conn.commit()
+    conn.close()
