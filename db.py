@@ -549,3 +549,14 @@ def mark_roblox_synced(discord_user_id, rank_name):
     )
     conn.commit()
     conn.close()
+
+
+def get_all_roblox_links():
+    """Returns {discord_user_id: (roblox_user_id, roblox_username, last_synced_rank)} for every linked account.
+    Used by the periodic reconciliation pass to avoid one DB query per guild member."""
+    conn = get_conn()
+    c = conn.cursor()
+    c.execute("SELECT discord_user_id, roblox_user_id, roblox_username, last_synced_rank FROM roblox_links")
+    rows = c.fetchall()
+    conn.close()
+    return {row[0]: (row[1], row[2], row[3]) for row in rows}
