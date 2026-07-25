@@ -1060,9 +1060,9 @@ class EventTimeModal(discord.ui.Modal):
 
         main_required_role_ids = None if self.ping_everyone else _extract_role_ids_from_mentions(self.ping_content)
         rsvp_note = (
-            ""
+            "React ✅ Attending, 🟨 Maybe, or ❌ Not Attending — only members with the pinged role can react."
             if main_required_role_ids
-            else ""
+            else "React ✅ Attending, 🟨 Maybe, or ❌ Not Attending."
         )
 
         embed = discord.Embed(title=f"📅 {self.entry['name']}", color=discord.Color.blue())
