@@ -1,5 +1,6 @@
 import os
 import re
+import asyncio
 import datetime
 from zoneinfo import ZoneInfo
 import aiohttp
@@ -74,6 +75,7 @@ SQUAD_LEAD_ROLE_IDS = _parse_role_ids(SQUAD_LEAD_ROLE_ID)
 ROBLOX_API_KEY = os.getenv("ROBLOX_API_KEY")  # Open Cloud API key with group:write scope for your group
 ROBLOX_GROUP_ID = os.getenv("ROBLOX_GROUP_ID")  # your Roblox group's numeric ID
 ROBLOX_SYNC_LOG_CHANNEL_ID = os.getenv("ROBLOX_SYNC_LOG_CHANNEL_ID")  # optional: channel that logs sync results
+ROBLOX_SYNC_INTERVAL_HOURS = float(os.getenv("ROBLOX_SYNC_INTERVAL_HOURS", "6"))  # how often the periodic reconciliation pass runs
 
 intents = discord.Intents.default()
 intents.members = True  # needed to resolve member display names
@@ -127,6 +129,8 @@ async def on_ready():
         site_monitor_loop.start()
     if not admin_request_expiry_loop.is_running():
         admin_request_expiry_loop.start()
+    if not roblox_periodic_sync_loop.is_running():
+        roblox_periodic_sync_loop.start()
     if not getattr(bot, "_squad_view_registered", False):
         bot.add_view(SquadSignupView())
         bot._squad_view_registered = True
@@ -1060,9 +1064,9 @@ class EventTimeModal(discord.ui.Modal):
 
         main_required_role_ids = None if self.ping_everyone else _extract_role_ids_from_mentions(self.ping_content)
         rsvp_note = (
-            ""
+            "React ✅ Attending, 🟨 Maybe, or ❌ Not Attending — only members with the pinged role can react."
             if main_required_role_ids
-            else ""
+            else "React ✅ Attending, 🟨 Maybe, or ❌ Not Attending."
         )
 
         embed = discord.Embed(title=f"📅 {self.entry['name']}", color=discord.Color.blue())
@@ -1672,6 +1676,66 @@ async def robloxlink(interaction: discord.Interaction, user: discord.Member = No
     )
 
 
+@tasks.loop(hours=ROBLOX_SYNC_INTERVAL_HOURS)
+async def roblox_periodic_sync_loop():
+    if not ROBLOX_API_KEY or not ROBLOX_GROUP_ID:
+        return
+    mapped_role_ids = roblox_config.all_mapped_role_ids()
+    if not mapped_role_ids:
+        return
+
+    links = db.get_all_roblox_links()
+    if not links:
+        return
+
+    synced, skipped, failed = 0, 0, 0
+    for guild in bot.guilds:
+        for member in guild.members:
+            if member.bot:
+                continue
+            if member.id not in links:
+                continue
+            member_role_ids = {r.id for r in member.roles}
+            if not (member_role_ids & mapped_role_ids):
+                continue
+
+            target = roblox_config.best_rank_for_member(member)
+            if not target:
+                continue
+
+            _, _, last_synced_rank = links[member.id]
+            if last_synced_rank == target.get("name"):
+                skipped += 1
+                continue  # already synced to this rank last time we checked — skip the API call
+
+            result = await _sync_member_to_roblox(member)
+            if result.startswith("Synced"):
+                synced += 1
+            else:
+                failed += 1
+            await asyncio.sleep(1)  # be gentle with Roblox's rate limits across a full pass
+
+    if (synced or failed) and ROBLOX_SYNC_LOG_CHANNEL_ID:
+        channel = bot.get_channel(int(ROBLOX_SYNC_LOG_CHANNEL_ID))
+        if channel is None:
+            try:
+                channel = await bot.fetch_channel(int(ROBLOX_SYNC_LOG_CHANNEL_ID))
+            except discord.HTTPException:
+                channel = None
+        if channel is not None:
+            try:
+                await channel.send(
+                    f"🔗 Roblox periodic sync: {synced} updated, {skipped} already up to date, {failed} failed."
+                )
+            except discord.Forbidden:
+                pass
+
+
+@roblox_periodic_sync_loop.before_loop
+async def before_roblox_periodic_sync_loop():
+    await bot.wait_until_ready()
+
+
 # ---------- /syncroblox ----------
 @bot.tree.command(name="syncroblox", description="Manually sync a member's Roblox group rank to match their Discord roles right now")
 @app_commands.describe(user="User to sync")
@@ -1680,6 +1744,21 @@ async def syncroblox(interaction: discord.Interaction, user: discord.Member):
     await interaction.response.defer(ephemeral=True)
     result = await _sync_member_to_roblox(user, admin_triggered=True)
     await interaction.followup.send(result, ephemeral=True)
+
+
+# ---------- /syncrobloxall ----------
+@bot.tree.command(name="syncrobloxall", description="Manually run the full Roblox reconciliation pass right now, for every linked member")
+@is_vp_admin()
+async def syncrobloxall(interaction: discord.Interaction):
+    await interaction.response.defer(ephemeral=True)
+    if not ROBLOX_API_KEY or not ROBLOX_GROUP_ID:
+        await interaction.followup.send("Roblox sync is not configured (ROBLOX_API_KEY / ROBLOX_GROUP_ID missing).", ephemeral=True)
+        return
+    await roblox_periodic_sync_loop()
+    await interaction.followup.send(
+        f"Ran a full sync pass — check {f'<#{ROBLOX_SYNC_LOG_CHANNEL_ID}>' if ROBLOX_SYNC_LOG_CHANNEL_ID else 'the console'} for results.",
+        ephemeral=True,
+    )
 
 
 if __name__ == "__main__":
