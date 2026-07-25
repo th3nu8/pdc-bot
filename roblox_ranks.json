@@ -2,103 +2,103 @@
   {
     "name": "Private",
     "discord_role_id": "1526574495752650953",
-    "roblox_roleset_id": 0,
-    "level": 1
+    "roblox_roleset_id": 780229018,
+    "level": 2
   },
   {
     "name": "Private First Class",
     "discord_role_id": "1526574493353644042",
-    "roblox_roleset_id": 0,
-    "level": 2
+    "roblox_roleset_id": 779109138,
+    "level": 3
   },
   {
     "name": "Specialist",
     "discord_role_id": "1526574485900361901",
-    "roblox_roleset_id": 0,
-    "level": 3
+    "roblox_roleset_id": 781314001,
+    "level": 4
   },
   {
     "name": "Sergeant",
     "discord_role_id": "1526576119464198305",
-    "roblox_roleset_id": 0,
-    "level": 4
+    "roblox_roleset_id": 781229004,
+    "level": 5
   },
   {
     "name": "Staff Sergeant",
     "discord_role_id": "1526576096240205914",
-    "roblox_roleset_id": 0,
-    "level": 4
+    "roblox_roleset_id": 781314002,
+    "level": 6
   },
   {
     "name": "Sergeant First Class",
     "discord_role_id": "1526576070332252270",
-    "roblox_roleset_id": 0,
-    "level": 4
+    "roblox_roleset_id": 779261121,
+    "level": 7
   },
   {
     "name": "Master Sergeant",
     "discord_role_id": "1526576032100909087",
-    "roblox_roleset_id": 0,
-    "level": 4
+    "roblox_roleset_id": 781172002,
+    "level": 8
   },
   {
     "name": "2nd Lieutenant",
     "discord_role_id": "1526576344547463168",
-    "roblox_roleset_id": 0,
-    "level": 4
+    "roblox_roleset_id": 781037018,
+    "level": 9
   },
   {
     "name": "1st Lieutenant",
     "discord_role_id": "1526576341552726036",
-    "roblox_roleset_id": 0,
-    "level": 4
+    "roblox_roleset_id": 780265023,
+    "level": 10
   },
   {
     "name": "Captain",
     "discord_role_id": "1526576339325292564",
-    "roblox_roleset_id": 0,
-    "level": 4
+    "roblox_roleset_id": 780229019,
+    "level": 11
   },
   {
     "name": "Major",
     "discord_role_id": "1526576327065342014",
-    "roblox_roleset_id": 0,
-    "level": 4
+    "roblox_roleset_id": 781833000,
+    "level": 12
   },
   {
     "name": "Lieutenant Colonel",
     "discord_role_id": "1526576324284518400",
-    "roblox_roleset_id": 0,
-    "level": 4
+    "roblox_roleset_id": 781468000,
+    "level": 13
   },
   {
     "name": "Colonel",
     "discord_role_id": "1526576639721607178",
-    "roblox_roleset_id": 0,
-    "level": 4
+    "roblox_roleset_id": 781488003,
+    "level": 14
   },
   {
     "name": "Lieutenant General",
     "discord_role_id": "1526576710634438727",
-    "roblox_roleset_id": 0,
-    "level": 4
+    "roblox_roleset_id": 780117020,
+    "level": 15
   },
   {
     "name": "General",
     "discord_role_id": "1526576702640095372",
-    "roblox_roleset_id": 0,
-    "level": 4
+    "roblox_roleset_id": 780265022,
+    "level": 16
   },
   {
     "name": "Deputy Commander",
     "discord_role_id": "1526576722722422835",
-    "roblox_roleset_id": 0,
-    "level": 4
+    "roblox_roleset_id": 781597006,
+    "level": 17
   },
   {
     "name": "Commander",
     "discord_role_id": "1526576724710523020",
-    "roblox_roleset_id": 0,
-    "level": 4
-  },
+    "roblox_roleset_id": 780429030,
+    "level": 18
+  }
 ]
