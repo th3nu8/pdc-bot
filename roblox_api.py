@@ -24,13 +24,17 @@ async def resolve_username_to_id(username: str):
                 timeout=aiohttp.ClientTimeout(total=10),
             ) as resp:
                 if resp.status != 200:
+                    body = await resp.text()
+                    print(f"ROBLOX_LOOKUP: unexpected status {resp.status} for username '{username}': {body[:300]}")
                     return None
                 data = await resp.json()
                 users = data.get("data", [])
                 if not users:
+                    print(f"ROBLOX_LOOKUP: no match for username '{username}' (Roblox returned an empty result — likely a typo or wrong spelling)")
                     return None
                 return users[0].get("id")
-    except Exception:
+    except Exception as e:
+        print(f"ROBLOX_LOOKUP: request failed for username '{username}': {e}")
         return None
 
 
