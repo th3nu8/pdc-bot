@@ -1,6 +1,7 @@
 import os
 import re
 import asyncio
+import secrets
 import datetime
 from zoneinfo import ZoneInfo
 import aiohttp
@@ -76,6 +77,8 @@ ROBLOX_API_KEY = os.getenv("ROBLOX_API_KEY")  # Open Cloud API key with group:wr
 ROBLOX_GROUP_ID = os.getenv("ROBLOX_GROUP_ID")  # your Roblox group's numeric ID
 ROBLOX_SYNC_LOG_CHANNEL_ID = os.getenv("ROBLOX_SYNC_LOG_CHANNEL_ID")  # optional: channel that logs sync results
 ROBLOX_SYNC_INTERVAL_HOURS = float(os.getenv("ROBLOX_SYNC_INTERVAL_HOURS", "6"))  # how often the periodic reconciliation pass runs
+
+EVENT_LOG_THREAD_ID = os.getenv("EVENT_LOG_THREAD_ID")  # thread that logs every time someone hosts an event via /event
 
 intents = discord.Intents.default()
 intents.members = True  # needed to resolve member display names
@@ -1064,9 +1067,9 @@ class EventTimeModal(discord.ui.Modal):
 
         main_required_role_ids = None if self.ping_everyone else _extract_role_ids_from_mentions(self.ping_content)
         rsvp_note = (
-            "React ✅ Attending, 🟨 Maybe, or ❌ Not Attending — only members with the pinged role can react."
+            ""
             if main_required_role_ids
-            else "React ✅ Attending, 🟨 Maybe, or ❌ Not Attending."
+            else ""
         )
 
         embed = discord.Embed(title=f"📅 {self.entry['name']}", color=discord.Color.blue())
@@ -1105,6 +1108,22 @@ class EventTimeModal(discord.ui.Modal):
             return
 
         db.create_event_message(main_message.id, self.origin_channel.id, self.entry["name"], None, main_required_role_ids)
+
+        if EVENT_LOG_THREAD_ID:
+            log_thread = bot.get_channel(int(EVENT_LOG_THREAD_ID))
+            if log_thread is None:
+                try:
+                    log_thread = await bot.fetch_channel(int(EVENT_LOG_THREAD_ID))
+                except discord.HTTPException:
+                    log_thread = None
+            if log_thread is not None:
+                try:
+                    await log_thread.send(
+                        f"📅 {self.host.mention} hosted **{self.entry['name']}** in {self.origin_channel.mention} "
+                        f"— <t:{ts}:F> ({main_message.jump_url})"
+                    )
+                except discord.Forbidden:
+                    print(f"EVENT_LOG: missing permission to post in thread {EVENT_LOG_THREAD_ID}")
 
         # Each detachment picked gets its own short ping message in its own channel —
         # separate from the main event card. Reactions on them get relayed back here.
@@ -1630,18 +1649,72 @@ async def on_member_update(before: discord.Member, after: discord.Member):
                 pass
 
 
-# ---------- /linkroblox ----------
-@bot.tree.command(name="linkroblox", description="Link your Discord account to your Roblox account")
+VERIFICATION_EXPIRY_MINUTES = 60
+
+
+# ---------- /verifyroblox ----------
+@bot.tree.command(name="verifyroblox", description="Start verifying ownership of your Roblox account")
 @app_commands.describe(roblox_username="Your exact Roblox username")
-async def linkroblox(interaction: discord.Interaction, roblox_username: str):
+async def verifyroblox(interaction: discord.Interaction, roblox_username: str):
     await interaction.response.defer(ephemeral=True)
     roblox_user_id = await roblox_api.resolve_username_to_id(roblox_username)
     if not roblox_user_id:
         await interaction.followup.send(f"Couldn't find a Roblox user named '{roblox_username}'.", ephemeral=True)
         return
-    db.set_roblox_link(interaction.user.id, roblox_user_id, roblox_username)
+
+    code = "BSOD-" + secrets.token_hex(3).upper()
+    db.create_roblox_verification(interaction.user.id, roblox_user_id, roblox_username, code)
+
     await interaction.followup.send(
-        f"Linked your Discord account to Roblox user **{roblox_username}** (ID {roblox_user_id}).", ephemeral=True
+        f"To verify you own **{roblox_username}**:\n"
+        f"1. Go to your Roblox profile → click **Edit** near your About section\n"
+        f"2. Paste this code anywhere in your bio: `{code}`\n"
+        f"3. Save it, then come back here and run `/verifyconfirm`\n\n"
+        f"You can remove the code from your bio once you're verified. This code expires in "
+        f"{VERIFICATION_EXPIRY_MINUTES} minutes — just run `/verifyroblox` again for a new one if it does.",
+        ephemeral=True,
+    )
+
+
+# ---------- /verifyconfirm ----------
+@bot.tree.command(name="verifyconfirm", description="Finish verifying your Roblox account after adding the code to your bio")
+async def verifyconfirm(interaction: discord.Interaction):
+    await interaction.response.defer(ephemeral=True)
+    pending = db.get_roblox_verification(interaction.user.id)
+    if not pending:
+        await interaction.followup.send("You don't have a pending verification. Run `/verifyroblox` first.", ephemeral=True)
+        return
+
+    roblox_user_id, roblox_username, code, created_at = pending
+    try:
+        created_dt = datetime.datetime.fromisoformat(created_at)
+        age_minutes = (datetime.datetime.now(datetime.timezone.utc) - created_dt).total_seconds() / 60
+    except (ValueError, TypeError):
+        age_minutes = 0
+    if age_minutes > VERIFICATION_EXPIRY_MINUTES:
+        db.delete_roblox_verification(interaction.user.id)
+        await interaction.followup.send("That verification code expired. Run `/verifyroblox` again to get a new one.", ephemeral=True)
+        return
+
+    description = await roblox_api.get_user_description(roblox_user_id)
+    if description is None:
+        await interaction.followup.send("Couldn't reach Roblox to check your profile right now. Try again shortly.", ephemeral=True)
+        return
+
+    if code not in description:
+        await interaction.followup.send(
+            f"Didn't find the code `{code}` in your Roblox bio yet. Make sure you saved your profile after "
+            f"adding it, then run `/verifyconfirm` again.",
+            ephemeral=True,
+        )
+        return
+
+    db.set_roblox_link(interaction.user.id, roblox_user_id, roblox_username)
+    db.delete_roblox_verification(interaction.user.id)
+    await interaction.followup.send(
+        f"✅ Verified! Your Discord account is now linked to Roblox user **{roblox_username}**. "
+        f"You can remove the code from your bio now.",
+        ephemeral=True,
     )
 
 
