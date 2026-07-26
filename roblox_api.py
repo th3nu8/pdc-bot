@@ -20,6 +20,22 @@ USERNAME_LOOKUP_URL = "https://users.roblox.com/v1/usernames/users"
 CLOUD_BASE = "https://apis.roblox.com/cloud/v2"
 
 
+async def get_user_description(roblox_user_id: int):
+    """Fetches a Roblox user's public profile description/bio. Returns str or None on failure."""
+    url = f"https://users.roblox.com/v1/users/{roblox_user_id}"
+    try:
+        async with AsyncSession() as session:
+            resp = await session.get(url, timeout=10)
+            if resp.status_code != 200:
+                print(f"ROBLOX_PROFILE: unexpected status {resp.status_code} for user {roblox_user_id}")
+                return None
+            data = resp.json()
+            return data.get("description", "")
+    except Exception as e:
+        print(f"ROBLOX_PROFILE: request failed for user {roblox_user_id}: {type(e).__name__}: {e}")
+        return None
+
+
 async def resolve_username_to_id(username: str):
     """Looks up a Roblox user ID from a username. Returns int or None if not found."""
     try:
