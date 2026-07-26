@@ -101,6 +101,13 @@ def init_db():
         last_synced_rank TEXT,
         last_synced_at TEXT
     )""")
+    c.execute("""CREATE TABLE IF NOT EXISTS roblox_verifications (
+        discord_user_id INTEGER PRIMARY KEY,
+        roblox_user_id INTEGER NOT NULL,
+        roblox_username TEXT,
+        code TEXT NOT NULL,
+        created_at TEXT
+    )""")
     conn.commit()
     conn.close()
 
@@ -560,3 +567,38 @@ def get_all_roblox_links():
     rows = c.fetchall()
     conn.close()
     return {row[0]: (row[1], row[2], row[3]) for row in rows}
+
+
+def create_roblox_verification(discord_user_id, roblox_user_id, roblox_username, code):
+    conn = get_conn()
+    c = conn.cursor()
+    c.execute(
+        "INSERT INTO roblox_verifications (discord_user_id, roblox_user_id, roblox_username, code, created_at) "
+        "VALUES (?, ?, ?, ?, ?) "
+        "ON CONFLICT(discord_user_id) DO UPDATE SET roblox_user_id=excluded.roblox_user_id, "
+        "roblox_username=excluded.roblox_username, code=excluded.code, created_at=excluded.created_at",
+        (discord_user_id, roblox_user_id, roblox_username, code, datetime.now(timezone.utc).isoformat()),
+    )
+    conn.commit()
+    conn.close()
+
+
+def get_roblox_verification(discord_user_id):
+    """Returns (roblox_user_id, roblox_username, code, created_at) or None."""
+    conn = get_conn()
+    c = conn.cursor()
+    c.execute(
+        "SELECT roblox_user_id, roblox_username, code, created_at FROM roblox_verifications WHERE discord_user_id=?",
+        (discord_user_id,),
+    )
+    row = c.fetchone()
+    conn.close()
+    return row
+
+
+def delete_roblox_verification(discord_user_id):
+    conn = get_conn()
+    c = conn.cursor()
+    c.execute("DELETE FROM roblox_verifications WHERE discord_user_id=?", (discord_user_id,))
+    conn.commit()
+    conn.close()
