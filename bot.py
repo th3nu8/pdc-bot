@@ -78,8 +78,6 @@ ROBLOX_GROUP_ID = os.getenv("ROBLOX_GROUP_ID")  # your Roblox group's numeric ID
 ROBLOX_SYNC_LOG_CHANNEL_ID = os.getenv("ROBLOX_SYNC_LOG_CHANNEL_ID")  # optional: channel that logs sync results
 ROBLOX_SYNC_INTERVAL_HOURS = float(os.getenv("ROBLOX_SYNC_INTERVAL_HOURS", "6"))  # how often the periodic reconciliation pass runs
 
-EVENT_LOG_THREAD_ID = os.getenv("EVENT_LOG_THREAD_ID")  # thread that logs every time someone hosts an event via /event
-
 intents = discord.Intents.default()
 intents.members = True  # needed to resolve member display names
 
@@ -1067,9 +1065,9 @@ class EventTimeModal(discord.ui.Modal):
 
         main_required_role_ids = None if self.ping_everyone else _extract_role_ids_from_mentions(self.ping_content)
         rsvp_note = (
-            ""
+            "React ✅ Attending, 🟨 Maybe, or ❌ Not Attending — only members with the pinged role can react."
             if main_required_role_ids
-            else ""
+            else "React ✅ Attending, 🟨 Maybe, or ❌ Not Attending."
         )
 
         embed = discord.Embed(title=f"📅 {self.entry['name']}", color=discord.Color.blue())
@@ -1108,22 +1106,6 @@ class EventTimeModal(discord.ui.Modal):
             return
 
         db.create_event_message(main_message.id, self.origin_channel.id, self.entry["name"], None, main_required_role_ids)
-
-        if EVENT_LOG_THREAD_ID:
-            log_thread = bot.get_channel(int(EVENT_LOG_THREAD_ID))
-            if log_thread is None:
-                try:
-                    log_thread = await bot.fetch_channel(int(EVENT_LOG_THREAD_ID))
-                except discord.HTTPException:
-                    log_thread = None
-            if log_thread is not None:
-                try:
-                    await log_thread.send(
-                        f"📅 {self.host.mention} hosted **{self.entry['name']}** in {self.origin_channel.mention} "
-                        f"— <t:{ts}:F> ({main_message.jump_url})"
-                    )
-                except discord.Forbidden:
-                    print(f"EVENT_LOG: missing permission to post in thread {EVENT_LOG_THREAD_ID}")
 
         # Each detachment picked gets its own short ping message in its own channel —
         # separate from the main event card. Reactions on them get relayed back here.
@@ -1662,7 +1644,7 @@ async def verifyroblox(interaction: discord.Interaction, roblox_username: str):
         await interaction.followup.send(f"Couldn't find a Roblox user named '{roblox_username}'.", ephemeral=True)
         return
 
-    code = "BSOD-" + secrets.token_hex(3).upper()
+    code = "PDC-" + secrets.token_hex(3).upper()
     db.create_roblox_verification(interaction.user.id, roblox_user_id, roblox_username, code)
 
     await interaction.followup.send(
